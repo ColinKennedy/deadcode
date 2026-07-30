@@ -73,6 +73,11 @@ class DeadCodeVisitor(ast.NodeVisitor):
         # Note: scope is a stack containing current module name, class names, function names
         self.scope_parts: List[str] = []
 
+        # Parallel stack to scope_parts (module name excluded), tracking whether each
+        # pushed scope is a 'class' or a 'function', so that class-level attributes
+        # (assigned directly in a class body) can be told apart from local variables.
+        self.scope_kinds: List[str] = []
+
         # This flag is used to stop registering code definitions in a code item
         # during recursive its parsing
         self.should_ignore_new_definitions = False
@@ -101,6 +106,7 @@ class DeadCodeVisitor(ast.NodeVisitor):
                 filename = os.path.basename(file_path)
                 module_name = os.path.splitext(filename)[0]
                 self.scope_parts = [module_name]
+                self.scope_kinds = []
 
                 file_content = f.read()
                 if file_content.strip() or (filename.startswith('__') and filename.endswith('__.py')):
@@ -285,7 +291,13 @@ class DeadCodeVisitor(ast.NodeVisitor):
         else:
             collection.append(code_item)
 
+    def _is_directly_in_class_body(self) -> bool:
+        return bool(self.scope_kinds) and self.scope_kinds[-1] == 'class'
+
     def _define_variable(self, name: str, node: ast.AST) -> None:
+        if self.args.ignore_class_attributes and self._is_directly_in_class_body():
+            return
+
         self._define(
             self.defined_vars,
             name,
@@ -505,8 +517,10 @@ class DeadCodeVisitor(ast.NodeVisitor):
         was_scope_increased = True
         if isinstance(node, ast.ClassDef):
             self.scope_parts.append(node.name)
+            self.scope_kinds.append('class')
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             self.scope_parts.append(node.name)
+            self.scope_kinds.append('function')
         else:
             was_scope_increased = False
 
@@ -544,6 +558,7 @@ class DeadCodeVisitor(ast.NodeVisitor):
         # TODO: use decorator for this code chunk
         if was_scope_increased:
             self.scope_parts.pop()
+            self.scope_kinds.pop()
 
     def _handle_ast_list(self, ast_list: List[ast.AST]) -> None:
         """

@@ -32,6 +32,7 @@ class Args:
     ignore_names_if_inherits_from: Iterable[Pathname] = ()
     ignore_names_in_files: Iterable[Pathname] = ()
     ignore_non_self_attributes: bool = False
+    ignore_class_attributes: bool = False
     tach_config: Iterable[Pathname] = ()
     no_color: bool = False
     quiet: bool = False
