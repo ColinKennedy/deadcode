@@ -23,6 +23,7 @@ from deadcode.visitor import lines
 from deadcode.visitor.ignore import (
     ERROR_CODES,
     IGNORED_VARIABLE_NAMES,
+    PYTEST_USEFIXTURES_DECORATOR_NAMES,
     _get_unused_items,
     _match,
     _match_many,
@@ -31,6 +32,7 @@ from deadcode.visitor.ignore import (
     _ignore_import,
     _ignore_function,
     _ignore_method,
+    _ignore_pytest_fixture,
     _ignore_variable,
 )
 
@@ -319,6 +321,15 @@ class DeadCodeVisitor(ast.NodeVisitor):
             if isinstance(attr_name_arg, ast.Str):
                 self.add_used_name(attr_name_arg.s)
 
+        # Count request.getfixturevalue("name") as usage of the "name" pytest fixture.
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == 'getfixturevalue'
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Str)
+        ):
+            self.add_used_name(node.args[0].s)
+
         # Parse variable names in new format strings:
         # "{my_var}".format(**locals())
         if (
@@ -375,8 +386,20 @@ class DeadCodeVisitor(ast.NodeVisitor):
 
         return inherits_from
 
+    def _track_usefixtures_mark(self, decorator: ast.expr) -> None:
+        """
+        `@pytest.mark.usefixtures("name")` (on a test function or a test class)
+        counts as usage of the "name" pytest fixture.
+        """
+        if utils.get_decorator_name(decorator) not in PYTEST_USEFIXTURES_DECORATOR_NAMES:  # type: ignore
+            return
+        for arg in getattr(decorator, 'args', []):
+            if isinstance(arg, ast.Str):
+                self.add_used_name(arg.s)
+
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         for decorator in node.decorator_list:
+            self._track_usefixtures_mark(decorator)
             if _match(utils.get_decorator_name(decorator), self.ignore_decorators):  # type: ignore
                 self._log(f'Ignoring class "{node.name}" (decorator whitelisted)')
                 break
@@ -385,6 +408,8 @@ class DeadCodeVisitor(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
         decorator_names = [utils.get_decorator_name(decorator) for decorator in node.decorator_list]  # type: ignore
+        for decorator in node.decorator_list:
+            self._track_usefixtures_mark(decorator)
 
         first_arg = node.args.args[0].arg if node.args.args else None
 
@@ -397,6 +422,8 @@ class DeadCodeVisitor(ast.NodeVisitor):
 
         if any(_match(name, self.ignore_decorators) for name in decorator_names):
             self._log(f'Ignoring {type_} "{node.name}" (decorator whitelisted)')
+        elif _ignore_pytest_fixture(self.filename, decorator_names):
+            self._log(f'Ignoring {type_} "{node.name}" (pytest fixture)')
         elif type_ == 'property':
             self._define(self.defined_props, node.name, node)
         elif type_ == 'method':

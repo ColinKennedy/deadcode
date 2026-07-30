@@ -19,6 +19,16 @@ PYTEST_METHOD_NAMES = {
     'setup_method',
     'teardown_method',
 }
+PYTEST_FIXTURE_DECORATOR_NAMES = {
+    '@pytest.fixture',
+    '@pytest_asyncio.fixture',
+    '@fixture',
+}
+PYTEST_USEFIXTURES_DECORATOR_NAMES = {
+    '@pytest.mark.usefixtures',
+    '@mark.usefixtures',
+    '@usefixtures',
+}
 
 ERROR_CODES = {
     'variable': b'DC01',
@@ -63,6 +73,10 @@ def _is_test_file(filename: Path) -> bool:
     )
 
 
+def _is_conftest_file(filename: Path) -> bool:
+    return filename.name == 'conftest.py'
+
+
 def _assigns_special_variable__all__(node: ast.Assign) -> bool:
     assert isinstance(node, ast.Assign)
     return isinstance(node.value, (ast.List, ast.Tuple)) and any(
@@ -85,6 +99,22 @@ def _ignore_import(filename: Path, import_name: str) -> bool:
 
 def _ignore_function(filename: Path, function_name: str) -> bool:
     return (function_name in PYTEST_FUNCTION_NAMES or function_name.startswith('test_')) and _is_test_file(filename)
+
+
+def _ignore_pytest_fixture(filename: Path, decorator_names: Iterable[str]) -> bool:
+    """
+    Pytest fixtures are consumed by name-matching (as a test's parameter, via
+    `autouse=True`, `@pytest.mark.usefixtures`, or `request.getfixturevalue()`),
+    so they're never called directly and would otherwise look unused.
+
+    Trust any `@pytest.fixture`/`@pytest_asyncio.fixture` defined in conftest.py
+    (auto-discovered project-wide by pytest) or in a recognized test file.
+    Fixtures defined elsewhere must be exempted explicitly, e.g. via
+    --ignore-names-if-decorated-with.
+    """
+    return (_is_conftest_file(filename) or _is_test_file(filename)) and _match_many(
+        decorator_names, PYTEST_FIXTURE_DECORATOR_NAMES
+    )
 
 
 def _ignore_method(filename: Path, method_name: str) -> bool:

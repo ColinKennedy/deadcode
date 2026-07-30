@@ -51,14 +51,15 @@ def condition_is_always_true(condition: ast.AST) -> bool:
 #         return path
 
 
-def get_decorator_name(decorator: Union[ast.Call, ast.Attribute]) -> str:
+def get_decorator_name(decorator: Union[ast.Call, ast.Attribute, ast.Name]) -> str:
     if isinstance(decorator, ast.Call):
         decorator = decorator.func  # type: ignore
     parts = []
     while isinstance(decorator, ast.Attribute):
         parts.append(decorator.attr)
         decorator = decorator.value  # type: ignore
-        parts.append(str(id(decorator)))  # type: ignore
+    if isinstance(decorator, ast.Name):
+        parts.append(decorator.id)
     return '@' + '.'.join(reversed(parts))
 
 
