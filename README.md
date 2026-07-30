@@ -89,6 +89,7 @@ repos:
 |`--ignore-definitions`                     | list | Ignores definition (including name and body) if a name of an expression matches any of the provided ones. |
 |`--ignore-definitions-if-inherits-from`    | list | Ignores definition (including name and body) of a class if it inherits from any of the provided class names. |
 |`--ignore-definitions-if-decorated-with`   | list | Ignores definition (including name and body) of an expression, which is decorated with any of the provided decorator names. |
+|`--ignore-non-self-attributes`             | -    | Does not report unused attributes assigned on objects other than `self`, e.g. `foo.bar = 1`. Such assignments may have side effects or be consumed by code outside of the analysed files, so they cannot safely be assumed dead. |
 |`--tach-config`                            | list | Paths to `tach.toml` files (see [Tach](https://docs.gauge.sh)). Names exposed via `[[interfaces]]` are treated as public API and never reported as unused; files in `unchecked = true` modules are skipped entirely. |
 |`--no-color`                               | -    | Removes colors from the output. |
 |`--count`                                  | -    | Provides the count of the detected unused names instead of printing them all out. |

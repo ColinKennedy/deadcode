@@ -35,6 +35,7 @@ from deadcode.visitor.ignore import (
     _ignore_method,
     _ignore_pytest_fixture,
     _ignore_variable,
+    _is_self_attribute,
 )
 
 logger = getLogger()
@@ -301,6 +302,8 @@ class DeadCodeVisitor(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if isinstance(node.ctx, ast.Store):
+            if self.args.ignore_non_self_attributes and not _is_self_attribute(node):
+                return
             self._define(self.defined_attrs, node.attr, node)
         elif isinstance(node.ctx, ast.Load):
             self.add_used_name(node.attr)

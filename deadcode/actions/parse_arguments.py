@@ -168,6 +168,18 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
     )
 
     parser.add_argument(
+        '--ignore-non-self-attributes',
+        help=(
+            'Does not report unused attributes assigned on objects other than `self`, e.g. `foo.bar = 1` '
+            'where `foo` is not the first argument of the enclosing method. Such assignments may have '
+            'side effects or be consumed by code outside of the analysed files, so they cannot safely '
+            'be assumed dead.'
+        ),
+        action='store_true',
+        default=False,
+    )
+
+    parser.add_argument(
         '--tach-config',
         help=(
             'Paths to one or more tach.toml files (https://docs.gauge.sh) whose [[interfaces]] '

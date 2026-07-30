@@ -123,6 +123,12 @@ def _ignore_method(filename: Path, method_name: str) -> bool:
     )
 
 
+def _is_self_attribute(node: ast.Attribute) -> bool:
+    """Whether an attribute assignment target is `self.attr` (as opposed to
+    e.g. `foo.attr`, where `foo` is some other object)."""
+    return isinstance(node.value, ast.Name) and node.value.id == 'self'
+
+
 def _ignore_variable(filename: Path, varname: str) -> bool:
     """
     Ignore _ (Python idiom), _x (pylint convention) and
