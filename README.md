@@ -66,7 +66,7 @@ Create a `.pre-commit-config.yaml` file in the root of your project directory, i
 # See https://pre-commit.com/hooks.html for more hooks
 repos:
   - repo: https://github.com/albertas/deadcode
-    rev: 2.4.1
+    rev: 2.4.2
     hooks:
       - id: deadcode
 ```
@@ -197,6 +197,9 @@ code base is implemented in.
 - [ ] Investigate ways of extracting and backporting Python3.10+ `ast` implementation to lower Python versions.
 
 ## Release notes
+- v2.4.2:
+    - Add `--tach-config` option to read `tach.toml` file(s) and treat names exposed via `[[interfaces]]`
+      as public API, and skip `unchecked = true` modules entirely.
 - v2.4.1:
     - Add `--version` option to show `deadcode` version.
     - Use stdout for `deadcode` output.
