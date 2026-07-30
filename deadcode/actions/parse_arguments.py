@@ -168,6 +168,19 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
     )
 
     parser.add_argument(
+        '--tach-config',
+        help=(
+            'Paths to one or more tach.toml files (https://docs.gauge.sh) whose [[interfaces]] '
+            'declarations mark names as public API (never reported as unused), and whose '
+            'unchecked modules are skipped entirely.'
+        ),
+        nargs='*',
+        action='append',
+        default=[],
+        type=str,
+    )
+
+    parser.add_argument(
         '--no-color',
         help='Turn off colors in the output',
         action='store_true',

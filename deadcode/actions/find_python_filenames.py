@@ -2,6 +2,7 @@ from logging import getLogger
 from typing import List
 from pathlib import Path
 
+from deadcode.actions.parse_tach_config import load_tach_index
 from deadcode.data_types import Args
 from deadcode.visitor.ignore import _match
 
@@ -9,6 +10,8 @@ logger = getLogger()
 
 
 def find_python_filenames(args: Args) -> List[str]:
+    tach_index = load_tach_index(args.tach_config)
+
     filenames = []
     paths: List[str] = list(args.paths)
     while paths:
@@ -17,6 +20,11 @@ def find_python_filenames(args: Args) -> List[str]:
         if _match(path, args.exclude):
             if args.verbose:
                 logger.info(f'Ignoring: {path}')
+            continue
+
+        if path.is_file() and path.suffix == '.py' and tach_index.is_unchecked(path):
+            if args.verbose:
+                logger.info(f'Ignoring (unchecked tach module): {path}')
             continue
 
         if path.is_file() and path.suffix == '.py':

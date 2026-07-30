@@ -50,6 +50,14 @@ ignore-names = ["BaseTestCase", "*Mixin"]
 ignore-names-in-files = ["migrations"]
 ```
 
+If your project uses [Tach](https://docs.gauge.sh) to declare module boundaries, `deadcode` can read one
+or more `tach.toml` files and treat names exposed through `[[interfaces]]` as intentional public API
+(never reported as unused, the same way `__all__` is treated), and skip files that belong to a module
+marked `unchecked = true`:
+```shell
+deadcode . --tach-config tach.toml
+```
+
 ## Pre-commit hook
 Create a `.pre-commit-config.yaml` file in the root of your project directory, if it doesn't exist, and add the following to the file:
 
@@ -81,6 +89,7 @@ repos:
 |`--ignore-definitions`                     | list | Ignores definition (including name and body) if a name of an expression matches any of the provided ones. |
 |`--ignore-definitions-if-inherits-from`    | list | Ignores definition (including name and body) of a class if it inherits from any of the provided class names. |
 |`--ignore-definitions-if-decorated-with`   | list | Ignores definition (including name and body) of an expression, which is decorated with any of the provided decorator names. |
+|`--tach-config`                            | list | Paths to `tach.toml` files (see [Tach](https://docs.gauge.sh)). Names exposed via `[[interfaces]]` are treated as public API and never reported as unused; files in `unchecked = true` modules are skipped entirely. |
 |`--no-color`                               | -    | Removes colors from the output. |
 |`--count`                                  | -    | Provides the count of the detected unused names instead of printing them all out. |
 |`--quiet`                                  | -    | Does not output anything. Makefile still fails with exit code 1 if unused names are found. |

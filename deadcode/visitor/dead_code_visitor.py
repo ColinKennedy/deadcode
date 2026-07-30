@@ -15,6 +15,7 @@ from deadcode.visitor.code_item import CodeItem
 from deadcode.visitor.utils import LoggingList, LoggingSet
 from deadcode.visitor import utils
 from deadcode.actions.parse_abstract_syntax_tree import parse_abstract_syntax_tree
+from deadcode.actions.parse_tach_config import load_tach_index
 from deadcode.utils.nested_scopes import NestedScope
 
 from deadcode.visitor import noqa
@@ -77,6 +78,7 @@ class DeadCodeVisitor(ast.NodeVisitor):
 
         self.noqa_lines: Dict[bytes, Set[int]] = {}
         self.scopes = NestedScope()
+        self.tach_index = load_tach_index(args.tach_config)
 
     @property
     def scope(self) -> str:
@@ -253,6 +255,7 @@ class DeadCodeVisitor(ast.NodeVisitor):
                 or _match(self.filename, self.args.ignore_names_in_files)
                 or self.should_ignore_new_definitions
                 or noqa.ignore_line(self.noqa_lines, lineno, ERROR_CODES[type_])
+                or self.tach_index.is_exposed(self.filename, name)
             )
 
         last_node = last_node or first_node
