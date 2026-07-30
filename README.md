@@ -66,7 +66,7 @@ Create a `.pre-commit-config.yaml` file in the root of your project directory, i
 # See https://pre-commit.com/hooks.html for more hooks
 repos:
   - repo: https://github.com/albertas/deadcode
-    rev: 2.5.0
+    rev: 2.6.0
     hooks:
       - id: deadcode
 ```
@@ -199,6 +199,10 @@ code base is implemented in.
 - [ ] Investigate ways of extracting and backporting Python3.10+ `ast` implementation to lower Python versions.
 
 ## Release notes
+- v2.6.0:
+    - Add `--ignore-class-attributes` option to not report unused attributes assigned directly
+      in a class body (e.g. `THING = "blah"` inside `class Foo:`), since such attributes may
+      control behaviour of inherited/overridden methods, external frameworks, or metaclasses.
 - v2.5.0:
     - Add `--ignore-non-self-attributes` option to not report unused attributes assigned on
       objects other than `self` (e.g. `foo.bar = 1`), since such assignments may have side
