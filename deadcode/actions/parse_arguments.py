@@ -180,6 +180,17 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
     )
 
     parser.add_argument(
+        '--ignore-class-attributes',
+        help=(
+            'Does not report unused attributes assigned directly in a class body, e.g. `THING = "blah"` '
+            'inside a `class Foo:` block. Such attributes may control behaviour of inherited or overridden '
+            'methods, external frameworks, or metaclasses, so they cannot safely be assumed dead.'
+        ),
+        action='store_true',
+        default=False,
+    )
+
+    parser.add_argument(
         '--tach-config',
         help=(
             'Paths to one or more tach.toml files (https://docs.gauge.sh) whose [[interfaces]] '
