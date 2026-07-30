@@ -66,7 +66,7 @@ Create a `.pre-commit-config.yaml` file in the root of your project directory, i
 # See https://pre-commit.com/hooks.html for more hooks
 repos:
   - repo: https://github.com/albertas/deadcode
-    rev: 2.4.2
+    rev: 2.5.0
     hooks:
       - id: deadcode
 ```
@@ -198,6 +198,10 @@ code base is implemented in.
 - [ ] Investigate ways of extracting and backporting Python3.10+ `ast` implementation to lower Python versions.
 
 ## Release notes
+- v2.5.0:
+    - Add `--ignore-non-self-attributes` option to not report unused attributes assigned on
+      objects other than `self` (e.g. `foo.bar = 1`), since such assignments may have side
+      effects or be consumed by code outside of the analysed files.
 - v2.4.2:
     - Add `--tach-config` option to read `tach.toml` file(s) and treat names exposed via `[[interfaces]]`
       as public API, and skip `unchecked = true` modules entirely.
