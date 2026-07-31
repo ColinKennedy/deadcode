@@ -123,6 +123,61 @@ def test_file_under_unchecked_module_is_skipped_entirely(tmp_path: Path) -> None
     assert 'unused_in_core' in result
 
 
+def test_name_exposed_via_literal_dotted_from_pattern_in_one_of_several_source_roots_is_not_reported(
+    tmp_path: Path,
+) -> None:
+    # Regression test: `from = ["some.subpackage.module"]` is a plain literal dotted path
+    # (no glob wildcard). "backend" and "frontend" are both listed as source_roots, but the
+    # "some.subpackage.module" module only exists under "backend".
+    write(
+        tmp_path / 'tach.toml',
+        """
+        source_roots = ["backend", "frontend"]
+
+        [[interfaces]]
+        expose = ["some_function"]
+        from = ["some.subpackage.module"]
+        """,
+    )
+    write(
+        tmp_path / 'backend' / 'some' / '__init__.py',
+        '',
+    )
+    write(
+        tmp_path / 'backend' / 'some' / 'subpackage' / '__init__.py',
+        '',
+    )
+    write(
+        tmp_path / 'backend' / 'some' / 'subpackage' / 'module.py',
+        """
+        def some_function():
+            pass
+        """,
+    )
+    write(
+        tmp_path / 'frontend' / 'util.py',
+        """
+        def helper():
+            pass
+        """,
+    )
+
+    result = main(
+        [
+            str(tmp_path / 'backend' / 'some' / 'subpackage' / 'module.py'),
+            str(tmp_path / 'frontend' / 'util.py'),
+            '--no-color',
+            '--tach-config',
+            str(tmp_path / 'tach.toml'),
+        ]
+    )
+
+    assert result is not None
+    assert 'some_function' not in result
+    assert 'helper' in result
+    assert 'DC02' in result
+
+
 def test_name_exposed_via_double_star_from_pattern_in_one_of_several_source_roots_is_not_reported(
     tmp_path: Path,
 ) -> None:

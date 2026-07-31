@@ -114,6 +114,22 @@ class TestInterfaceExposure:
 
         assert index.is_exposed(tmp_path / 'api.py', 'write_data')
 
+    def test_literal_dotted_from_pattern_exposes_subpackage_module_present_in_only_one_of_several_source_roots(
+        self, tmp_path: Path
+    ) -> None:
+        # Regression test: `from = ["some.subpackage.module"]` is a plain literal dotted
+        # path (no glob wildcard). The `some.subpackage.module` module only exists under
+        # one of several source_roots; the other source_root has no such subpackage at all.
+        backend = tmp_path / 'backend'
+        frontend = tmp_path / 'frontend'
+        config = TachConfig(
+            source_roots=[backend, frontend],
+            interfaces=[TachInterface(expose=['some_function'], from_patterns=['some.subpackage.module'])],
+        )
+        index = TachIndex([config])
+
+        assert index.is_exposed(backend / 'some' / 'subpackage' / 'module.py', 'some_function')
+
     def test_double_star_from_pattern_exposes_nested_subpackage_across_multiple_source_roots(
         self, tmp_path: Path
     ) -> None:
