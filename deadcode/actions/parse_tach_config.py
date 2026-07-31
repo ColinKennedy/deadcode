@@ -80,7 +80,7 @@ class TachIndex:
             if module_path is None:
                 continue
             for interface in config.interfaces:
-                adopts_interface = interface.from_patterns is None or _match_any_regex(
+                adopts_interface = interface.from_patterns is None or _match_any_dotted_glob(
                     interface.from_patterns, module_path
                 )
                 if adopts_interface and _match_any_regex(interface.expose, name):
