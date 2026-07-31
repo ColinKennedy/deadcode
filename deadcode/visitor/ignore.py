@@ -29,6 +29,11 @@ PYTEST_USEFIXTURES_DECORATOR_NAMES = {
     '@mark.usefixtures',
     '@usefixtures',
 }
+OVERRIDE_DECORATOR_NAMES = {
+    '@typing.override',
+    '@typing_extensions.override',
+    '@override',
+}
 
 ERROR_CODES = {
     'variable': b'DC01',
@@ -127,6 +132,16 @@ def _ignore_pytest_fixture(filename: Path, decorator_names: Iterable[str]) -> bo
     return (_is_conftest_file(filename) or _is_test_file(filename)) and _match_many(
         decorator_names, PYTEST_FIXTURE_DECORATOR_NAMES
     )
+
+
+def _ignore_override(decorator_names: Iterable[str]) -> bool:
+    """
+    `@typing.override` (and `@typing_extensions.override`) marks a method as
+    overriding one declared on a base class. The base class's method is what
+    calling code actually calls, so this override is used even though nothing
+    calls it by its own name directly.
+    """
+    return _match_many(decorator_names, OVERRIDE_DECORATOR_NAMES)
 
 
 def _ignore_method(filename: Path, method_name: str) -> bool:

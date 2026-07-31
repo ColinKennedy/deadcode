@@ -33,6 +33,7 @@ from deadcode.visitor.ignore import (
     _ignore_import,
     _ignore_function,
     _ignore_method,
+    _ignore_override,
     _ignore_pytest_fixture,
     _ignore_variable,
     _is_self_attribute,
@@ -442,6 +443,8 @@ class DeadCodeVisitor(ast.NodeVisitor):
             self._log(f'Ignoring {type_} "{node.name}" (decorator whitelisted)')
         elif _ignore_pytest_fixture(self.filename, decorator_names):
             self._log(f'Ignoring {type_} "{node.name}" (pytest fixture)')
+        elif _ignore_override(decorator_names):
+            self._log(f'Ignoring {type_} "{node.name}" (typing.override)')
         elif type_ == 'property':
             self._define(self.defined_props, node.name, node)
         elif type_ == 'method':
