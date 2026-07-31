@@ -98,7 +98,19 @@ def _ignore_import(filename: Path, import_name: str) -> bool:
 
 
 def _ignore_function(filename: Path, function_name: str) -> bool:
-    return (function_name in PYTEST_FUNCTION_NAMES or function_name.startswith('test_')) and _is_test_file(filename)
+    return (
+        (function_name in PYTEST_FUNCTION_NAMES or function_name.startswith('test_')) and _is_test_file(filename)
+    ) or _ignore_pytest_hook(filename, function_name)
+
+
+def _ignore_pytest_hook(filename: Path, function_name: str) -> bool:
+    """
+    `pytest_*` functions in conftest.py (e.g. `pytest_configure`,
+    `pytest_collection_modifyitems`, `pytest_addoption`) are hook
+    implementations that pytest calls automatically by name, never directly,
+    so they would otherwise look unused.
+    """
+    return _is_conftest_file(filename) and function_name.startswith('pytest_')
 
 
 def _ignore_pytest_fixture(filename: Path, decorator_names: Iterable[str]) -> bool:
