@@ -33,7 +33,12 @@ def main(
         return error_message + ('\n\n' + file_diff if file_diff else '')
 
     if not args.count and not args.quiet:
-        print('\033[1mWell done!\033[0m ✨ 🚀 ✨')
+        try:
+            print('\033[1mWell done!\033[0m ✨ 🚀 ✨')
+        except UnicodeEncodeError:
+            # Some terminals (e.g. Windows' default cp1252 console codepage) cannot
+            # encode emoji. Fall back to a plain message rather than crashing.
+            print('\033[1mWell done!\033[0m')
     return None
 
 
