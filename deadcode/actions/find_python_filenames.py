@@ -22,6 +22,11 @@ def find_python_filenames(args: Args) -> List[str]:
                 logger.info(f'Ignoring: {path}')
             continue
 
+        if tach_index.is_outside_source_roots(path):
+            if args.verbose:
+                logger.info(f'Ignoring (outside tach source roots): {path}')
+            continue
+
         if path.is_file() and path.suffix == '.py' and tach_index.is_unchecked(path):
             if args.verbose:
                 logger.info(f'Ignoring (unchecked tach module): {path}')

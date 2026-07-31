@@ -35,6 +35,53 @@ class TestSourceRoots:
         assert config.source_roots == [(tmp_path / 'backend').resolve()]
 
 
+class TestIsOutsideSourceRoots:
+    def test_file_in_project_but_outside_source_roots_is_outside(self, tmp_path: Path) -> None:
+        # Regression test: a file living next to a declared source root (but not inside it)
+        # used to still be scanned, even though only source_roots should be scanned.
+        write(tmp_path / 'tach.toml', 'source_roots = ["src"]')
+        write(tmp_path / 'src' / 'core.py', 'def used(): pass')
+        write(tmp_path / 'package.py', 'def helper(): pass')
+
+        index = load_tach_index([str(tmp_path / 'tach.toml')])
+
+        assert index.is_outside_source_roots(tmp_path / 'package.py') is True
+
+    def test_file_inside_source_root_is_not_outside(self, tmp_path: Path) -> None:
+        write(tmp_path / 'tach.toml', 'source_roots = ["src"]')
+        write(tmp_path / 'src' / 'core.py', 'def used(): pass')
+
+        index = load_tach_index([str(tmp_path / 'tach.toml')])
+
+        assert index.is_outside_source_roots(tmp_path / 'src' / 'core.py') is False
+
+    def test_project_root_itself_is_not_outside(self, tmp_path: Path) -> None:
+        # Directories on the way to a source root must not be pruned, or nothing beneath
+        # them (including the source root) would ever get scanned.
+        write(tmp_path / 'tach.toml', 'source_roots = ["src"]')
+
+        index = load_tach_index([str(tmp_path / 'tach.toml')])
+
+        assert index.is_outside_source_roots(tmp_path) is False
+        assert index.is_outside_source_roots(tmp_path / 'src') is False
+
+    def test_directory_unrelated_to_any_tach_project_is_not_outside(self, tmp_path: Path) -> None:
+        # An explicitly provided directory that has nothing to do with the tach project
+        # (e.g. `deadcode --tach-config tach.toml some_other_directory`) is unaffected.
+        write(tmp_path / 'project' / 'tach.toml', 'source_roots = ["src"]')
+        write(tmp_path / 'project' / 'src' / 'core.py', 'def used(): pass')
+        write(tmp_path / 'some_other_directory' / 'mod.py', 'def helper(): pass')
+
+        index = load_tach_index([str(tmp_path / 'project' / 'tach.toml')])
+
+        assert index.is_outside_source_roots(tmp_path / 'some_other_directory' / 'mod.py') is False
+
+    def test_no_tach_config_never_restricts(self, tmp_path: Path) -> None:
+        index = TachIndex(configs=[])
+
+        assert index.is_outside_source_roots(tmp_path / 'anything.py') is False
+
+
 class TestDottedModulePath:
     def test_plain_module(self, tmp_path: Path) -> None:
         source_root = tmp_path / 'src'
