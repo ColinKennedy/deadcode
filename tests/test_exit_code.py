@@ -1,7 +1,7 @@
 import sys
 from unittest.mock import patch
 
-from deadcode.cli import print_main
+from deadcode.cli import main, print_main
 from deadcode.utils.base_test_case import BaseTestCase
 
 
@@ -56,3 +56,27 @@ class TestExitCode(BaseTestCase):
                 print_main()
             except SystemExit as exc:
                 self.fail(f'print_main() unexpectedly called sys.exit({exc.code})')
+
+    def test_success_message_falls_back_when_terminal_cannot_encode_emoji(self):
+        # Regression test: some terminals (e.g. Windows' default cp1252 console codepage)
+        # raise UnicodeEncodeError when printing emoji. main() must not crash -- it should
+        # fall back to a plain message instead.
+        self.files = {
+            'foo.py': b"""
+                used_variable = "Hello"
+                print(used_variable)
+                """
+        }
+
+        original_print = print
+
+        def fake_print(message: str = '', *args: object, **kwargs: object) -> None:
+            if '✨' in message:
+                reason = 'character maps to <undefined>'
+                raise UnicodeEncodeError('cp1252', message, 0, 1, reason)
+            original_print(message, *args, **kwargs)
+
+        with patch('deadcode.cli.print', side_effect=fake_print):
+            result = main(['foo.py', '--no-color'])
+
+        self.assertEqual(result, None)
