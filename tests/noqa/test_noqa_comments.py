@@ -100,6 +100,77 @@ class TestNoqaComments(BaseTestCase):
             }
         )
 
+    def test_unused_decorated_function(self):
+        # Regression test: the noqa suppression check used to look at the decorator's
+        # line instead of the `def` line, so a noqa comment placed on the `def` line
+        # (where the error is actually reported) of a decorated function was ignored.
+        self.files = {
+            'foo.py': b"""
+                def decorator(f):
+                    return f
+
+
+                @decorator
+                def unused_function():  # noqa: DC02
+                    pass
+                """
+        }
+
+        unused_names = main(['foo.py', '--no-color', '--fix'])
+        self.assertEqual(unused_names, None)
+
+        self.assertFiles(
+            {
+                'foo.py': b"""
+                def decorator(f):
+                    return f
+
+
+                @decorator
+                def unused_function():  # noqa: DC02
+                    pass
+                """
+            }
+        )
+
+    def test_unused_decorated_function_with_multiline_signature(self):
+        # Regression test: same bug as test_unused_decorated_function, but with the
+        # noqa comment attached to a multi-line function signature's `def` line.
+        self.files = {
+            'foo.py': b"""
+                def decorator(f):
+                    return f
+
+
+                @decorator
+                def unused_function(  # noqa: DC02
+                    foo: int,
+                    bar: str,
+                ) -> None:
+                    pass
+                """
+        }
+
+        unused_names = main(['foo.py', '--no-color', '--fix'])
+        self.assertEqual(unused_names, None)
+
+        self.assertFiles(
+            {
+                'foo.py': b"""
+                def decorator(f):
+                    return f
+
+
+                @decorator
+                def unused_function(  # noqa: DC02
+                    foo: int,
+                    bar: str,
+                ) -> None:
+                    pass
+                """
+            }
+        )
+
     def test_unused_method(self):
         self.files = {
             'foo.py': b"""
