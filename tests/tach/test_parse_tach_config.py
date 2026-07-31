@@ -114,6 +114,24 @@ class TestInterfaceExposure:
 
         assert index.is_exposed(tmp_path / 'api.py', 'write_data')
 
+    def test_double_star_from_pattern_exposes_nested_subpackage_across_multiple_source_roots(
+        self, tmp_path: Path
+    ) -> None:
+        # Regression test: with two source_roots present (one holding subpackages, the
+        # other flat files), a `**` `from` pattern targeting the subpackage root must use
+        # dotted-glob matching (like `[[modules]] path` patterns), not raw regex - `**` is
+        # invalid regex syntax and used to make the interface silently never match.
+        backend = tmp_path / 'backend'
+        frontend = tmp_path / 'frontend'
+        config = TachConfig(
+            source_roots=[backend, frontend],
+            interfaces=[TachInterface(expose=['get_data'], from_patterns=['pkg1.**'])],
+        )
+        index = TachIndex([config])
+
+        assert index.is_exposed(backend / 'pkg1' / 'sub' / 'mod.py', 'get_data')
+        assert not index.is_exposed(frontend / 'util.py', 'get_data')
+
     def test_file_outside_source_roots_is_never_exposed(self, tmp_path: Path) -> None:
         config = TachConfig(
             source_roots=[tmp_path / 'src'],
