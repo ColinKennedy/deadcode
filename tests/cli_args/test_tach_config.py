@@ -236,6 +236,85 @@ def test_name_exposed_via_double_star_from_pattern_in_one_of_several_source_root
     assert 'DC02' in result
 
 
+def test_file_next_to_source_root_is_not_scanned(tmp_path: Path) -> None:
+    # Regression test: only directories listed in source_roots should be scanned when
+    # --tach-config is given. A file living alongside a source root (but not inside it)
+    # was being scanned anyway.
+    write(
+        tmp_path / 'tach.toml',
+        """
+        source_roots = ["src"]
+        """,
+    )
+    write(
+        tmp_path / 'src' / 'core.py',
+        """
+        def unused_in_core():
+            pass
+        """,
+    )
+    write(
+        tmp_path / 'package.py',
+        """
+        def unused_outside_source_roots():
+            pass
+        """,
+    )
+
+    result = main(
+        [
+            str(tmp_path),
+            '--no-color',
+            '--tach-config',
+            str(tmp_path / 'tach.toml'),
+        ]
+    )
+
+    assert result is not None
+    assert 'unused_in_core' in result
+    assert 'unused_outside_source_roots' not in result
+
+
+def test_explicit_directory_outside_tach_project_is_still_scanned(tmp_path: Path) -> None:
+    # A directory explicitly passed on the command line that has nothing to do with the
+    # tach project (not the project root or nested within it) is scanned regardless of
+    # source_roots.
+    write(
+        tmp_path / 'project' / 'tach.toml',
+        """
+        source_roots = ["src"]
+        """,
+    )
+    write(
+        tmp_path / 'project' / 'src' / 'core.py',
+        """
+        def unused_in_core():
+            pass
+        """,
+    )
+    write(
+        tmp_path / 'some_other_directory' / 'mod.py',
+        """
+        def unused_elsewhere():
+            pass
+        """,
+    )
+
+    result = main(
+        [
+            str(tmp_path / 'project' / 'src'),
+            str(tmp_path / 'some_other_directory'),
+            '--no-color',
+            '--tach-config',
+            str(tmp_path / 'project' / 'tach.toml'),
+        ]
+    )
+
+    assert result is not None
+    assert 'unused_in_core' in result
+    assert 'unused_elsewhere' in result
+
+
 def test_multiple_tach_config_values_are_merged(tmp_path: Path) -> None:
     write(
         tmp_path / 'a' / 'tach.toml',

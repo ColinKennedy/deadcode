@@ -28,6 +28,7 @@ class TachModule:
 @dataclass
 class TachConfig:
     source_roots: List[Path]
+    project_root: Optional[Path] = None
     modules: List[TachModule] = field(default_factory=list)
     interfaces: List[TachInterface] = field(default_factory=list)
 
@@ -37,6 +38,31 @@ class TachIndex:
 
     def __init__(self, configs: List[TachConfig]) -> None:
         self._configs = configs
+
+    def is_outside_source_roots(self, path: Path) -> bool:
+        """True if `path` belongs to a tach project (is its project root or nested under it)
+
+        but falls outside every one of that project's `source_roots`, and outside them for
+        every other tach project it might also belong to. Paths unrelated to any tach project
+        (e.g. an explicitly provided directory that lives elsewhere entirely) are unaffected.
+        """
+        path = path.resolve()
+
+        related_to_any_config = False
+        for config in self._configs:
+            if config.project_root is None:
+                continue
+            relation = _relation_to_project_root(path, config.project_root)
+            if relation == 'unrelated':
+                continue
+            related_to_any_config = True
+            if relation == 'ancestor':
+                # `path` is still above the project root, so it must be walked into to reach it.
+                return False
+            if any(_within_or_towards_source_root(path, source_root) for source_root in config.source_roots):
+                return False
+
+        return related_to_any_config
 
     def is_unchecked(self, file: Path) -> bool:
         for config in self._configs:
@@ -77,11 +103,11 @@ def _parse_tach_toml(path: Path) -> TachConfig:
     with open(path, 'rb') as f:
         data = tomllib.load(f)
 
-    project_root = path.parent
+    project_root = path.parent.resolve()
     raw_source_roots = data.get('source_roots') or ['.']
     source_roots = [(project_root / root).resolve() for root in raw_source_roots]
 
-    config = TachConfig(source_roots=source_roots)
+    config = TachConfig(source_roots=source_roots, project_root=project_root)
     config.modules.extend(_extract_modules(data))
     config.interfaces.extend(_extract_interfaces(data))
 
@@ -178,6 +204,18 @@ def _dotted_module_path(file: Path, source_roots: List[Path]) -> Optional[str]:
         return None
 
     return '.'.join(parts) if parts else None
+
+
+def _relation_to_project_root(path: Path, project_root: Path) -> str:
+    if path == project_root or project_root in path.parents:
+        return 'inside'
+    if path in project_root.parents:
+        return 'ancestor'
+    return 'unrelated'
+
+
+def _within_or_towards_source_root(path: Path, source_root: Path) -> bool:
+    return path == source_root or source_root in path.parents or path in source_root.parents
 
 
 def _dotted_glob_to_regex(pattern: str) -> re.Pattern[str]:
