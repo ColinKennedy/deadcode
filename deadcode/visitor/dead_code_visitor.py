@@ -287,7 +287,7 @@ class DeadCodeVisitor(ast.NodeVisitor):
 
         self.scopes.add(code_item)
 
-        if ignored(first_lineno, type_=type_):
+        if ignored(last_node.lineno, type_=type_):
             self._log(f'Ignoring {type_} "{name}"')
         else:
             collection.append(code_item)
