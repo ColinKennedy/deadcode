@@ -38,8 +38,14 @@ def main(
 
 
 def print_main() -> None:
-    if result := main():
+    is_version_request = '--version' in sys.argv
+
+    result = main()
+    if result:
         print(result)
+
+    if not is_version_request and result is not None:
+        sys.exit(1)
 
 
 if __name__ == '__main__':
