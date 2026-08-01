@@ -1,9 +1,10 @@
 import re
 import sys
 from dataclasses import dataclass, field
+from functools import lru_cache
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -46,6 +47,9 @@ class TachIndex:
         every other tach project it might also belong to. Paths unrelated to any tach project
         (e.g. an explicitly provided directory that lives elsewhere entirely) are unaffected.
         """
+        if not self._configs:
+            return False
+
         path = path.resolve()
 
         related_to_any_config = False
@@ -89,6 +93,14 @@ class TachIndex:
 
 
 def load_tach_index(tach_config_paths: Iterable[str]) -> TachIndex:
+    # find_python_filenames() and DeadCodeVisitor.__init__() both load the
+    # tach index from the same args.tach_config, so cache it per path set to
+    # avoid re-parsing (and re-globbing for tach.domain.toml files) twice.
+    return _load_tach_index_cached(tuple(tach_config_paths))
+
+
+@lru_cache(maxsize=None)
+def _load_tach_index_cached(tach_config_paths: Tuple[str, ...]) -> TachIndex:
     configs = []
     for raw_path in tach_config_paths:
         path = Path(raw_path).resolve()

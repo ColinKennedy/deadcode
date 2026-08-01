@@ -1,5 +1,6 @@
 import ast
 from fnmatch import fnmatch, fnmatchcase
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Set, Union
 
@@ -70,7 +71,11 @@ def _match_many(names: Union[Iterable[str], Iterable[Path]], patterns: Iterable[
     return any(_match(name, patterns, case) for name in names)
 
 
+@lru_cache(maxsize=None)
 def _is_test_file(filename: Path) -> bool:
+    # Called once per definition (function/class/method) in a file, so cache
+    # per-filename: `filename.resolve()` is a filesystem syscall and the
+    # answer never changes for repeated calls with the same file.
     return _match(
         filename.resolve(),
         ['*/test/*', '*/tests/*', '*/test*.py', '*[-_]test.py'],

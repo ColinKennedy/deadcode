@@ -87,6 +87,12 @@ class DeadCodeVisitor(ast.NodeVisitor):
         self.scopes = NestedScope()
         self.tach_index = load_tach_index(args.tach_config)
 
+        # Caches getattr(self, 'visit_' + node type name, None) per AST node
+        # type, since visit() below is called once per AST node (potentially
+        # millions of times) and both the string concatenation and the
+        # getattr MRO walk are otherwise repeated for every single node.
+        self._visitor_cache: Dict[type, Optional[Callable[[ast.AST], None]]] = {}
+
     @property
     def scope(self) -> str:
         return '.'.join(self.scope_parts)
@@ -510,8 +516,12 @@ class DeadCodeVisitor(ast.NodeVisitor):
                 self.should_ignore_new_definitions = True
                 should_turn_off_ignore_new_definitions = True
 
-        method_name = 'visit_' + node.__class__.__name__
-        visitor = getattr(self, method_name, None)
+        node_type = node.__class__
+        try:
+            visitor = self._visitor_cache[node_type]
+        except KeyError:
+            visitor = getattr(self, 'visit_' + node_type.__name__, None)
+            self._visitor_cache[node_type] = visitor
 
         if visitor:
             visitor(node)
