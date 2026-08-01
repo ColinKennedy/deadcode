@@ -64,7 +64,10 @@ def _is_special_name(name: str) -> bool:
 
 def _match(name: Union[str, Path], patterns: Iterable[str], case: bool = True) -> bool:
     func = fnmatchcase if case else fnmatch
-    return any(func(str(name), pattern) for pattern in patterns)
+    # .as_posix() (not str()) for Path names, so a pattern like '*/tests/*'
+    # matches consistently regardless of the OS's native path separator.
+    name_str = name.as_posix() if isinstance(name, Path) else name
+    return any(func(name_str, pattern) for pattern in patterns)
 
 
 def _match_many(names: Union[Iterable[str], Iterable[Path]], patterns: Iterable[str], case: bool = True) -> bool:

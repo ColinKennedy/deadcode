@@ -23,7 +23,10 @@ def fix_or_show_unused_code(unused_items: Iterable[CodeItem], args: Args) -> str
 
     filename_to_unused_items = defaultdict(list)
     for unused_item in unused_items:
-        filename_to_unused_items[str(unused_item.filename)].append(unused_item)
+        # .as_posix() (not str()) to match the forward-slash filenames
+        # find_python_filenames() produces, which the mocked/real `open()`
+        # calls below key off of.
+        filename_to_unused_items[unused_item.filename.as_posix()].append(unused_item)
 
     result = []
 

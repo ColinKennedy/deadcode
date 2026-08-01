@@ -33,9 +33,11 @@ def find_python_filenames(args: Args) -> List[str]:
             continue
 
         if path.is_file() and path.suffix == '.py':
-            filenames.append(str(path))
+            # .as_posix() (not str()) so filenames stay forward-slash on every
+            # OS, matching the paths given on the command line.
+            filenames.append(path.as_posix())
         elif path.is_dir():
-            paths += list([str(p) for p in path.glob('*')])
+            paths += list([p.as_posix() for p in path.glob('*')])
         elif not path.exists():
             # TODO: unify error logging and reporting
             # Maybe a cli flag could be added to stop on error
