@@ -9,7 +9,7 @@ description = "Find and remove dead code in Python codebases (Rust implementatio
 readme = "README.md"
 license = { text = "AGPL-3.0-only" }
 authors = [
-    { name = "Albertas Gimbutas", email = "albertasgim@gmail.com" },
+    { name = "Colin Kennedy", email = "colinvfx@gmail.com" },
 ]
 requires-python = ">=3.8"
 classifiers = [
