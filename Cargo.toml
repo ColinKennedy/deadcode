@@ -5,6 +5,7 @@ edition = "2021"
 rust-version = "1.74"
 description = "Find and remove dead code in Python codebases."
 license = "AGPL-3.0-only"
+authors = ["Colin Kennedy <colinvfx@gmail.com>"]
 repository = "https://github.com/albertas/deadcode"
 
 [[bin]]
