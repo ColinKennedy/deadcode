@@ -1,0 +1,192 @@
+[project]
+name = "deadcode"
+version = "2.4.1"
+authors = [
+    {name = "Albertas Gimbutas", email = "albertasgim@gmail.com"},
+]
+description = "Find and remove dead code."
+readme = "README.md"
+requires-python = ">= 3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "tomli>=2.0.1"
+]
+
+[project.optional-dependencies]
+test = [
+    "hatch",
+    "ruff",
+    "mypy",
+    "pip-audit",
+    "deadcode",
+    "pytest",
+    "pytest-cov",
+]
+
+[project.scripts]
+deadcode = "deadcode.cli:print_main"
+
+[project.urls]
+homepage = "https://github.com/albertas/deadcode"
+documentation = "https://deadcode.readthedocs.io/"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+[tool.hatch.publish.index]  # Hatch docs: https://hatch.pypa.io/latest/config/build/
+disable = false
+
+[tool.hatch.build]
+include = ["**/*.py"]
+exclude = ["tests/**"]
+
+
+[tool.ruff]  # https://beta.ruff.rs/docs/settings/
+line-length = 120
+
+[tool.ruff.format]
+quote-style = "single"
+docstring-code-format = true
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "single"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D203",    # one blank line before class
+    "D213",    # multi line summary second line
+    "COM812",  # missing trailing comma
+    "ISC001",  # single line implicit string concatenation
+    "ANN101",  # deprecated requirement to annotate self
+    "A001",
+    "ANN001",
+    "ANN002",
+    "ANN202",
+    "ANN204",
+    "ANN401",
+    "ARG001",
+    "ARG002",
+    "C411",
+    "C901",
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D107",
+    "D200",
+    "D202",
+    "D205",
+    "D209",
+    "D212",
+    "D400",
+    "D401",
+    "D404",
+    "D415",
+    "D419",
+    "ERA001",
+    "FA100",
+    "FBT001",
+    "FBT002",
+    "FBT003",
+    "FIX002",
+    "G004",
+    "I001",
+    "INP001",
+    "N802",
+    "PD011",
+    "PGH003",
+    "PLE0101",
+    "PLR0124",
+    "PLR0133",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR2004",
+    "PLW2901",
+    "PT009",
+    "PTH107",
+    "PTH113",
+    "PTH119",
+    "PTH122",
+    "PTH123",
+    "RET501",
+    "RET504",
+    "RET505",
+    "RET507",
+    "RUF012",
+    "RUF100",
+    "S101",
+    "SIM102",
+    "SIM105",
+    "SIM114",
+    "T201",
+    "TD002",
+    "TD003",
+    "TD005",
+    "TRY300",
+    "UP004",
+    "UP015",
+    "W293",
+    "W605",
+    "UP",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",  # allow assert and no docs in tests
+    "PT009",
+    "ANN201",
+    "D",
+]
+"tests/fix/test_unused_imports.py" = ["F401", "W291"]
+
+[tool.mypy]
+exclude = ["build", "dist", ".venv"]
+python_version = "3.10"
+strict = true
+pretty = true
+color_output = true
+show_error_codes = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.deadcode]
+ignore_names = [
+    "ERROR_CODES",
+    "fix",
+    "fix_indent",
+    "ignore_definitions_if_decorated_with",
+    "ignore_if_decorated_with",
+    "ignore_if_inherits_from",
+    "ignore_line",
+    "ignore_names_if_decorated_with",
+    "ignore_names_if_inherits_from",
+    "ignore_bodies_of",
+    "ignore_bodies_if_decorated_with",
+    "ignore_bodies_if_inherits_from",
+    "parse_noqa",
+    "scoped_name",
+    "show",
+    "visit_*",
+]
+ignore_names_in_files = [
+    "deadcode/utils/base_test_case.py"
+]
+exclude = ["tests"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=. --no-cov-on-fail --cov-fail-under=88.0"

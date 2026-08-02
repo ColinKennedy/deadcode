@@ -16,6 +16,12 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # The Python implementation moved to legacy-python/ during the Rust
+        # port (see RUST_PORT_PLAN.md) — this job now checks that reference
+        # copy, not the new Rust implementation (see wheels.yml for that).
+        working-directory: legacy-python
 
     steps:
     - uses: actions/checkout@v3
