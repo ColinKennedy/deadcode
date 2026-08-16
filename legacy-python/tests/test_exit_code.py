@@ -1,6 +1,8 @@
 import sys
 from unittest.mock import patch
 
+import pytest
+
 from deadcode.cli import main, print_main
 from deadcode.utils.base_test_case import BaseTestCase
 
@@ -13,10 +15,10 @@ class TestExitCode(BaseTestCase):
                 """
         }
 
-        with patch.object(sys, 'argv', ['deadcode', 'foo.py', '--no-color']), self.assertRaises(SystemExit) as ctx:
+        with patch.object(sys, 'argv', ['deadcode', 'foo.py', '--no-color']), pytest.raises(SystemExit) as ctx:
             print_main()
 
-        self.assertEqual(ctx.exception.code, 1)
+        self.assertEqual(ctx.value.code, 1)
 
     def test_exits_with_status_0_when_no_dead_code_is_found(self):
         self.files = {
@@ -44,11 +46,11 @@ class TestExitCode(BaseTestCase):
 
         with (
             patch.object(sys, 'argv', ['deadcode', 'foo.py', '--no-color', '--quiet']),
-            self.assertRaises(SystemExit) as ctx,
+            pytest.raises(SystemExit) as ctx,
         ):
             print_main()
 
-        self.assertEqual(ctx.exception.code, 1)
+        self.assertEqual(ctx.value.code, 1)
 
     def test_does_not_exit_with_error_status_for_version_flag(self):
         with patch.object(sys, 'argv', ['deadcode', '--version']):
@@ -73,7 +75,8 @@ class TestExitCode(BaseTestCase):
         def fake_print(message: str = '', *args: object, **kwargs: object) -> None:
             if '✨' in message:
                 reason = 'character maps to <undefined>'
-                raise UnicodeEncodeError('cp1252', message, 0, 1, reason)
+                encoding = 'cp1252'
+                raise UnicodeEncodeError(encoding, message, 0, 1, reason)
             original_print(message, *args, **kwargs)
 
         with patch('deadcode.cli.print', side_effect=fake_print):

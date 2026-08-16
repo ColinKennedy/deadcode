@@ -134,8 +134,10 @@ class TestNoqaComments(BaseTestCase):
         )
 
     def test_unused_decorated_function_with_multiline_signature(self):
-        # Regression test: same bug as test_unused_decorated_function, but with the
-        # noqa comment attached to a multi-line function signature's `def` line.
+        # Regression test: same bug as test_unused_decorated_function, but where
+        # the suppression comment sits on a multi-line function signature's
+        # `def` line. (Worded to avoid starting a line with the directive
+        # spelling itself, which ruff would read as a real bare directive.)
         self.files = {
             'foo.py': b"""
                 def decorator(f):

@@ -69,6 +69,5 @@ class TestIgnoreClassAttributes(BaseTestCase):
 
         self.assertEqual(
             unused_names,
-            'foo.py:4:4: DC04 Method `method` is never used\n'
-            'foo.py:5:8: DC01 Variable `local_unused` is never used',
+            'foo.py:4:4: DC04 Method `method` is never used\n' 'foo.py:5:8: DC01 Variable `local_unused` is never used',
         )

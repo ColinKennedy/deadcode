@@ -2,6 +2,7 @@ import ast
 
 from deadcode.visitor.utils import get_decorator_name
 
+
 class TestUtils:
     def test_get_decorator_name_attribute(self):
         # Test with a decorator with an attribute
@@ -12,21 +13,16 @@ class TestUtils:
         decorator = ast.Attribute(
             value=decorator,  # Create nested attributes
             attr='my_decorator2',
-            ctx=ast.Load()
+            ctx=ast.Load(),
         )
         assert get_decorator_name(decorator) == '@module.my_decorator1.my_decorator2'
-
 
     def test_get_decorator_name_call(self):
         decorator = ast.Attribute(value=ast.Name(id='module', ctx=ast.Load()), attr='my_decorator')
         assert get_decorator_name(decorator) == '@module.my_decorator'
 
         # Test with a decorator that is a call
-        decorator = ast.Call(
-            func=decorator,
-            args=[],
-            keywords=[]
-        )
+        decorator = ast.Call(func=decorator, args=[], keywords=[])
         assert get_decorator_name(decorator) == '@module.my_decorator'
 
     def test_get_decorator_name_bare_name(self):
