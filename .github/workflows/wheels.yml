@@ -101,8 +101,30 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # Runner and artifact are paired explicitly rather than derived from the
+      # OS name. A wheel only installs on a matching architecture, and the
+      # previous nested-ternary form hardcoded macos-x86_64 -- which broke once
+      # `macos-latest` became Apple Silicon (macos-26-arm64), since the x86_64
+      # wheel is not installable there. Pairing them here means adding a
+      # platform is one obvious edit instead of an easily-missed branch.
+      #
+      # Not every built wheel has a runner to test on: linux-aarch64 and
+      # windows-x86 are still shipped untested.
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact: wheels-linux-x86_64
+          - os: windows-latest
+            artifact: wheels-windows-x64
+          # macos-latest is Apple Silicon.
+          - os: macos-latest
+            artifact: wheels-macos-aarch64
+          # macos-13 is the last Intel runner, and the only way to exercise the
+          # x86_64 macOS wheel — which was shipped completely untested before,
+          # since the old smoke test asked for it on an arm64 runner and pip
+          # quietly resolved something else entirely.
+          - os: macos-13
+            artifact: wheels-macos-x86_64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -111,9 +133,19 @@ jobs:
       - name: Download this OS's wheel
         uses: actions/download-artifact@v4
         with:
-          pattern: wheels-${{ contains(matrix.os, 'ubuntu') && 'linux-x86_64' || contains(matrix.os, 'windows') && 'windows-x64' || 'macos-x86_64' }}
+          pattern: ${{ matrix.artifact }}
           path: dist
           merge-multiple: true
+      # Fail loudly if the download produced nothing, rather than letting the
+      # install step report a confusing "no matching distribution".
+      - name: Verify a wheel was downloaded
+        shell: bash
+        run: |
+          ls -l dist
+          if [ "$(ls dist/*.whl 2>/dev/null | wc -l)" -eq 0 ]; then
+            echo "::error::no .whl in dist for ${{ matrix.artifact }}"
+            exit 1
+          fi
       # The distribution is `lapsed`; the command it installs is `deadcode`.
       # `--no-index` matters: this previously asked for `deadcode`, which does
       # not match the built `lapsed-*.whl`, so pip fell through to PyPI and
