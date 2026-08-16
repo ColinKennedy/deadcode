@@ -2,7 +2,7 @@
 name = "deadcode"
 version = "3.0.0"
 edition = "2021"
-rust-version = "1.74"
+rust-version = "1.95"
 description = "Find and remove dead code in Python codebases."
 license = "AGPL-3.0-only"
 authors = ["Colin Kennedy <colinvfx@gmail.com>"]
@@ -17,8 +17,9 @@ name = "deadcode"
 path = "src/lib.rs"
 
 [dependencies]
-rustpython-parser = "0.4.0"
-rustpython-ast = "0.4.0"
+ruff_python_parser = "0.0.9"
+ruff_python_ast = "0.0.9"
+ruff_text_size = "0.0.9"
 clap = { version = "4", features = ["derive"] }
 toml = "0.8"
 regex = "1"

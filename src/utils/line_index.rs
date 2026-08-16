@@ -1,9 +1,9 @@
-//! Converts rustpython-parser's byte-offset `TextRange`s into (line, column)
-//! pairs matching CPython's `ast` module convention: 1-indexed `lineno`,
-//! 0-indexed `col_offset`, both counted in UTF-8 bytes (not chars/codepoints)
-//! within the line — this matches CPython's post-3.8 AST column semantics.
+//! Converts the parser's byte-offset `TextRange`s into (line, column) pairs
+//! matching CPython's `ast` module convention: 1-indexed `lineno`, 0-indexed
+//! `col_offset`, both counted in UTF-8 bytes (not chars/codepoints) within the
+//! line — this matches CPython's post-3.8 AST column semantics.
 
-use rustpython_parser::text_size::TextSize;
+use ruff_text_size::TextSize;
 
 pub struct LineIndex {
     /// Byte offset of the start of each line. line_starts[0] == 0.

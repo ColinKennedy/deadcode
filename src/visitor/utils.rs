@@ -10,7 +10,7 @@
 //! removes an entire category of AST recursion (double-visiting every
 //! `if`/`while`/ternary condition) for free.
 
-use rustpython_ast::Expr;
+use ruff_python_ast::Expr;
 
 /// Port of `get_decorator_name`: builds `@module.attr` (or `@name` for a
 /// bare decorator, or the callee's name for a `@deco(...)` call-form
@@ -35,13 +35,13 @@ pub fn get_decorator_name(decorator: &Expr) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_parser::{ast, Parse};
+    use crate::actions::parse_abstract_syntax_tree::parse_abstract_syntax_tree;
 
     fn decorator_of(src: &str) -> Expr {
-        let module = ast::Suite::parse(src, "<test>").unwrap();
+        let module = parse_abstract_syntax_tree(src).unwrap();
         match &module[0] {
-            rustpython_ast::Stmt::FunctionDef(f) => f.decorator_list[0].clone(),
-            rustpython_ast::Stmt::ClassDef(c) => c.decorator_list[0].clone(),
+            ruff_python_ast::Stmt::FunctionDef(f) => f.decorator_list[0].expression.clone(),
+            ruff_python_ast::Stmt::ClassDef(c) => c.decorator_list[0].expression.clone(),
             _ => panic!("expected a decorated def"),
         }
     }

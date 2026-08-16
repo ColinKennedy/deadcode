@@ -3,7 +3,7 @@
 //! Structural differences from the Python original, all deliberate (see
 //! `RUST_PORT_PLAN.md`):
 //! - No generic `ast.iter_fields`-style reflection: an exhaustive `match`
-//!   over rustpython_ast's `Stmt`/`Expr` enums, monomorphized, no dynamic
+//!   over `ruff_python_ast`'s `Stmt`/`Expr` enums, monomorphized, no dynamic
 //!   dispatch.
 //! - `unreachable_code` (DC09) tracking is NOT implemented: tracing
 //!   `get_unused_code_items()` in the Python source shows that collection is
@@ -22,12 +22,13 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use rustpython_ast::{
-    Alias, Arguments, Constant, Expr, ExprContext, Identifier, Keyword, Operator, Pattern, Ranged,
-    Stmt,
+use ruff_python_ast::{
+    Alias, Decorator, Expr, ExprContext, Identifier, InterpolatedStringElement, Keyword, Operator,
+    Parameters, Pattern, Stmt,
 };
-use rustpython_parser::{ast, Parse};
+use ruff_text_size::{Ranged, TextSize};
 
+use crate::actions::parse_abstract_syntax_tree::parse_abstract_syntax_tree;
 use crate::actions::parse_tach_config::TachIndex;
 use crate::constants::UnusedCodeType;
 use crate::data_types::{Args, Part};
@@ -93,17 +94,23 @@ pub struct DeadCodeVisitor<'a> {
     noqa_lines: std::collections::HashMap<String, HashSet<u32>>,
     scopes: NestedScope,
     line_index: LineIndex,
+    /// Source of the file currently being visited. Needed to recover the
+    /// `def`/`class` keyword offset of a decorated definition — see
+    /// `definition_keyword_start`.
+    source: String,
 }
 
-/// Extracts a `str` constant value (`ast.Str`-equivalent under modern
-/// `ast.Constant`), mirroring the several `isinstance(x, ast.Str)` checks in
-/// the Python original.
+/// Extracts a `str` constant value, mirroring the several
+/// `isinstance(x, ast.Str)` checks in the Python original.
+///
+/// ruff models string literals as their own `Expr::StringLiteral` variant
+/// rather than folding every literal into one `Constant` node, so this is a
+/// direct variant test instead of a value-kind test. Implicitly concatenated
+/// literals (`"a" "b"`) are joined by `to_str()`, matching what CPython's
+/// parser hands `ast.Str`.
 fn as_str_constant(expr: &Expr) -> Option<&str> {
     match expr {
-        Expr::Constant(c) => match &c.value {
-            Constant::Str(s) => Some(s.as_str()),
-            _ => None,
-        },
+        Expr::StringLiteral(s) => Some(s.value.to_str()),
         _ => None,
     }
 }
@@ -111,7 +118,9 @@ fn as_str_constant(expr: &Expr) -> Option<&str> {
 fn is_locals_call(node: &Expr) -> bool {
     if let Expr::Call(c) = node {
         if let Expr::Name(n) = c.func.as_ref() {
-            return n.id.as_str() == "locals" && c.args.is_empty() && c.keywords.is_empty();
+            return n.id.as_str() == "locals"
+                && c.arguments.args.is_empty()
+                && c.arguments.keywords.is_empty();
         }
     }
     false
@@ -185,6 +194,7 @@ impl<'a> DeadCodeVisitor<'a> {
             noqa_lines: std::collections::HashMap::new(),
             scopes: NestedScope::new(),
             line_index: LineIndex::new(""),
+            source: String::new(),
         }
     }
 
@@ -213,8 +223,10 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.noqa_lines = noqa::parse_noqa(&file_content);
                 self.filename = PathBuf::from(file_path);
                 self.line_index = LineIndex::new(&content_str);
+                self.source = content_str;
 
-                match ast::Suite::parse(&content_str, file_path) {
+                let parsed = parse_abstract_syntax_tree(&self.source);
+                match parsed {
                     Ok(module) => {
                         for stmt in &module {
                             self.walk_stmt(stmt);
@@ -292,19 +304,59 @@ impl<'a> DeadCodeVisitor<'a> {
         Some(inherits_from)
     }
 
+    /// Returns the offset Python's `ast` would report as a definition's
+    /// `lineno`/`col_offset`.
+    ///
+    /// CPython (and `rustpython-parser`, which this was originally written
+    /// against) place a decorated `def`/`class` node at the `def`/`async`/
+    /// `class` keyword, keeping the decorators in a separate `decorator_list`
+    /// whose own line is reported separately. ruff instead *starts* the
+    /// node's range at the first decorator, so for a decorated definition the
+    /// keyword offset has to be recovered by scanning forward from the end of
+    /// the last decorator, past whitespace, comments and line continuations.
+    ///
+    /// Without this, a decorated definition is reported on its decorator's
+    /// line, which also breaks `# noqa` lookup: the noqa comment sits on the
+    /// `def` line, not the decorator's.
+    fn definition_keyword_start(&self, node_start: TextSize, decorators: &[Decorator]) -> TextSize {
+        let Some(last_decorator) = decorators.last() else {
+            return node_start;
+        };
+        let bytes = self.source.as_bytes();
+        let mut offset = usize::from(last_decorator.range().end());
+        while offset < bytes.len() {
+            match bytes[offset] {
+                // A comment runs to the end of its line.
+                b'#' => {
+                    while offset < bytes.len() && bytes[offset] != b'\n' {
+                        offset += 1;
+                    }
+                }
+                b'\\' => offset += 1,
+                byte if byte.is_ascii_whitespace() => offset += 1,
+                // First real token after the decorators: the keyword.
+                _ => break,
+            }
+        }
+        TextSize::from(offset as u32)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn push_definition(
         &mut self,
         kind: DefinedKind,
         name: &str,
-        start: rustpython_parser::text_size::TextSize,
-        end: rustpython_parser::text_size::TextSize,
-        decorator_list: &[Expr],
+        start: TextSize,
+        end: TextSize,
+        decorator_list: &[Decorator],
         type_specific_ignored: bool,
         inherits_from: Option<Vec<String>>,
     ) {
         let type_ = kind.unused_code_type();
         let error_code = type_.error_code();
+
+        // No-op for everything except decorated definitions.
+        let start = self.definition_keyword_start(start, decorator_list);
 
         let first_line = match decorator_list.first() {
             Some(d) => self.line_index.line_col(d.range().start()).0 as u32,
@@ -374,12 +426,7 @@ impl<'a> DeadCodeVisitor<'a> {
         }
     }
 
-    fn define_variable(
-        &mut self,
-        name: &str,
-        start: rustpython_parser::text_size::TextSize,
-        end: rustpython_parser::text_size::TextSize,
-    ) {
+    fn define_variable(&mut self, name: &str, start: TextSize, end: TextSize) {
         if self.args.ignore_class_attributes && self.is_directly_in_class_body() {
             return;
         }
@@ -393,7 +440,7 @@ impl<'a> DeadCodeVisitor<'a> {
             return;
         }
         if let Expr::Call(call) = decorator {
-            for arg in &call.args {
+            for arg in call.arguments.args.iter() {
                 if let Some(s) = as_str_constant(arg) {
                     self.add_used_name(s);
                 }
@@ -405,7 +452,7 @@ impl<'a> DeadCodeVisitor<'a> {
         for alias in names {
             let full_name = alias.name.as_str();
             let name = full_name.split('.').next().unwrap_or(full_name);
-            let effective_name = alias.asname.as_deref().unwrap_or(name);
+            let effective_name = alias.asname.as_ref().map_or(name, |a| a.as_str());
             let ignored = ignore::ignore_import(&self.filename, name);
             self.push_definition(
                 DefinedKind::Import,
@@ -422,22 +469,20 @@ impl<'a> DeadCodeVisitor<'a> {
         }
     }
 
-    fn handle_name(
-        &mut self,
-        id: &Identifier,
-        ctx: ExprContext,
-        start: rustpython_parser::text_size::TextSize,
-        end: rustpython_parser::text_size::TextSize,
-    ) {
+    fn handle_name(&mut self, id: &str, ctx: ExprContext, start: TextSize, end: TextSize) {
         match ctx {
             ExprContext::Load | ExprContext::Del => {
-                if !ignore::IGNORED_VARIABLE_NAMES.contains(&id.as_str()) {
-                    self.add_used_name(id.as_str());
+                if !ignore::IGNORED_VARIABLE_NAMES.contains(&id) {
+                    self.add_used_name(id);
                 }
             }
             ExprContext::Store => {
-                self.define_variable(id.as_str(), start, end);
+                self.define_variable(id, start, end);
             }
+            // ruff-only variant, used for error-recovery nodes in invalid
+            // source. CPython's `ast` has no equivalent, so there is no
+            // Python behavior to mirror — ignore it.
+            ExprContext::Invalid => {}
         }
     }
 
@@ -446,8 +491,8 @@ impl<'a> DeadCodeVisitor<'a> {
         value: &Expr,
         attr: &Identifier,
         ctx: ExprContext,
-        start: rustpython_parser::text_size::TextSize,
-        end: rustpython_parser::text_size::TextSize,
+        start: TextSize,
+        end: TextSize,
     ) {
         match ctx {
             ExprContext::Store => {
@@ -468,7 +513,7 @@ impl<'a> DeadCodeVisitor<'a> {
             ExprContext::Load => {
                 self.add_used_name(attr.as_str());
             }
-            ExprContext::Del => {}
+            ExprContext::Del | ExprContext::Invalid => {}
         }
     }
 
@@ -534,17 +579,25 @@ impl<'a> DeadCodeVisitor<'a> {
     fn walk_function_like(
         &mut self,
         name: &Identifier,
-        args: &Arguments,
-        decorator_list: &[Expr],
-        start: rustpython_parser::text_size::TextSize,
-        end: rustpython_parser::text_size::TextSize,
+        parameters: &Parameters,
+        decorator_list: &[Decorator],
+        start: TextSize,
+        end: TextSize,
     ) {
-        let decorator_names: Vec<String> = decorator_list.iter().map(get_decorator_name).collect();
+        let decorator_names: Vec<String> = decorator_list
+            .iter()
+            .map(|d| get_decorator_name(&d.expression))
+            .collect();
         for decorator in decorator_list {
-            self.track_usefixtures_mark(decorator);
+            self.track_usefixtures_mark(&decorator.expression);
         }
 
-        let first_arg = args.args.first().map(|a| a.def.arg.as_str());
+        // Deliberately `args` only, not `posonlyargs`: Python checks
+        // `node.args.args[0].arg == 'self'`, and CPython's `ast` (like ruff's)
+        // keeps positional-only parameters in a separate list. So `def m(self, /)`
+        // is not treated as a method by the original either — preserved here
+        // rather than "fixed", per the exact-parity rule for this port.
+        let first_arg = parameters.args.first().map(|a| a.parameter.name.as_str());
 
         let is_property = decorator_names.iter().any(|d| d == "@property");
         let is_method_by_decorator = decorator_names
@@ -613,15 +666,18 @@ impl<'a> DeadCodeVisitor<'a> {
                 }
             }
             Pattern::MatchClass(p) => {
-                for kwd_attr in &p.kwd_attrs {
-                    self.add_used_name(kwd_attr.as_str());
+                // ruff groups what Python keeps as parallel `kwd_attrs` /
+                // `kwd_patterns` lists into one `keywords` list of
+                // (attr, pattern) pairs; same traversal, same order.
+                for keyword in &p.arguments.keywords {
+                    self.add_used_name(keyword.attr.as_str());
                 }
                 self.walk_expr(&p.cls);
-                for pat in &p.patterns {
+                for pat in &p.arguments.patterns {
                     self.handle_match_pattern(pat);
                 }
-                for pat in &p.kwd_patterns {
-                    self.handle_match_pattern(pat);
+                for keyword in &p.arguments.keywords {
+                    self.handle_match_pattern(&keyword.pattern);
                 }
             }
             Pattern::MatchStar(_) => {}
@@ -641,7 +697,10 @@ impl<'a> DeadCodeVisitor<'a> {
     fn walk_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::ClassDef(c) => {
-                let inherits_from = self.compute_inherits_from(&c.bases);
+                // `bases()`/`keywords()` return empty slices when the class
+                // has no argument list at all (`class C:`), matching Python's
+                // always-present-but-empty `bases`/`keywords` fields.
+                let inherits_from = self.compute_inherits_from(c.bases());
 
                 let mut should_turn_off = false;
                 let matches_ignore_defs =
@@ -659,7 +718,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 }
 
                 for decorator in &c.decorator_list {
-                    self.track_usefixtures_mark(decorator);
+                    self.track_usefixtures_mark(&decorator.expression);
                 }
                 self.push_definition(
                     DefinedKind::Class,
@@ -688,12 +747,12 @@ impl<'a> DeadCodeVisitor<'a> {
                 }
 
                 for decorator in &c.decorator_list {
-                    self.walk_expr(decorator);
+                    self.walk_expr(&decorator.expression);
                 }
-                for base in &c.bases {
+                for base in c.bases() {
                     self.walk_expr(base);
                 }
-                for kw in &c.keywords {
+                for kw in c.keywords() {
                     self.walk_expr(&kw.value);
                 }
                 for s in &c.body {
@@ -706,10 +765,15 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.scope_parts.pop();
                 self.scope_kinds.pop();
             }
+            // Covers both `def` and `async def`: ruff models them as one node
+            // with an `is_async` flag, where Python/rustpython had separate
+            // `FunctionDef`/`AsyncFunctionDef` nodes. The two arms here were
+            // byte-identical, and nothing in this visitor branches on
+            // asyncness, so collapsing them is behavior-preserving.
             Stmt::FunctionDef(f) => {
                 self.walk_function_like(
                     &f.name,
-                    &f.args,
+                    &f.parameters,
                     &f.decorator_list,
                     f.range().start(),
                     f.range().end(),
@@ -717,32 +781,9 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.scope_parts.push(f.name.as_str().to_string());
                 self.scope_kinds.push(ScopeKind::Function);
                 for decorator in &f.decorator_list {
-                    self.walk_expr(decorator);
+                    self.walk_expr(&decorator.expression);
                 }
-                self.walk_arguments(&f.args);
-                if let Some(returns) = &f.returns {
-                    self.walk_expr(returns);
-                }
-                for s in &f.body {
-                    self.walk_stmt(s);
-                }
-                self.scope_parts.pop();
-                self.scope_kinds.pop();
-            }
-            Stmt::AsyncFunctionDef(f) => {
-                self.walk_function_like(
-                    &f.name,
-                    &f.args,
-                    &f.decorator_list,
-                    f.range().start(),
-                    f.range().end(),
-                );
-                self.scope_parts.push(f.name.as_str().to_string());
-                self.scope_kinds.push(ScopeKind::Function);
-                for decorator in &f.decorator_list {
-                    self.walk_expr(decorator);
-                }
-                self.walk_arguments(&f.args);
+                self.walk_parameters(&f.parameters);
                 if let Some(returns) = &f.returns {
                     self.walk_expr(returns);
                 }
@@ -797,17 +838,8 @@ impl<'a> DeadCodeVisitor<'a> {
                     self.walk_expr(t);
                 }
             }
+            // `for` and `async for` (merged in ruff behind `is_async`).
             Stmt::For(s) => {
-                self.walk_expr(&s.target);
-                self.walk_expr(&s.iter);
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
-                for st in &s.orelse {
-                    self.walk_stmt(st);
-                }
-            }
-            Stmt::AsyncFor(s) => {
                 self.walk_expr(&s.target);
                 self.walk_expr(&s.iter);
                 for st in &s.body {
@@ -831,22 +863,22 @@ impl<'a> DeadCodeVisitor<'a> {
                 for st in &s.body {
                     self.walk_stmt(st);
                 }
-                for st in &s.orelse {
-                    self.walk_stmt(st);
-                }
-            }
-            Stmt::With(s) => {
-                for item in &s.items {
-                    self.walk_expr(&item.context_expr);
-                    if let Some(v) = &item.optional_vars {
-                        self.walk_expr(v);
+                // Python nests each `elif` as another `If` inside `orelse`,
+                // so recursion reached every branch's test and body. ruff
+                // flattens the whole chain into one clause list instead
+                // (`test: None` marks the trailing `else`) — iterating it
+                // visits exactly the same nodes.
+                for clause in &s.elif_else_clauses {
+                    if let Some(test) = &clause.test {
+                        self.walk_expr(test);
+                    }
+                    for st in &clause.body {
+                        self.walk_stmt(st);
                     }
                 }
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
             }
-            Stmt::AsyncWith(s) => {
+            // `with` and `async with` (merged in ruff behind `is_async`).
+            Stmt::With(s) => {
                 for item in &s.items {
                     self.walk_expr(&item.context_expr);
                     if let Some(v) = &item.optional_vars {
@@ -877,32 +909,15 @@ impl<'a> DeadCodeVisitor<'a> {
                     self.walk_expr(cause);
                 }
             }
+            // `try`/`except` and `try`/`except*` (merged in ruff behind
+            // `is_star`). Also covers PEP 758's parenthesis-free
+            // `except A, B:` form, which parses into the same handler shape.
             Stmt::Try(s) => {
                 for st in &s.body {
                     self.walk_stmt(st);
                 }
                 for handler in &s.handlers {
-                    let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler;
-                    if let Some(t) = &h.type_ {
-                        self.walk_expr(t);
-                    }
-                    for st in &h.body {
-                        self.walk_stmt(st);
-                    }
-                }
-                for st in &s.orelse {
-                    self.walk_stmt(st);
-                }
-                for st in &s.finalbody {
-                    self.walk_stmt(st);
-                }
-            }
-            Stmt::TryStar(s) => {
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
-                for handler in &s.handlers {
-                    let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler;
+                    let ruff_python_ast::ExceptHandler::ExceptHandler(h) = handler;
                     if let Some(t) = &h.type_ {
                         self.walk_expr(t);
                     }
@@ -932,29 +947,33 @@ impl<'a> DeadCodeVisitor<'a> {
             | Stmt::Pass(_)
             | Stmt::Break(_)
             | Stmt::Continue(_) => {}
+            // Jupyter-only (`%magic`, `!shell`). deadcode only ever parses
+            // `.py` files in `Mode::Module`, so this is unreachable in
+            // practice; ignored rather than panicking.
+            Stmt::IpyEscapeCommand(_) => {}
         }
     }
 
-    fn walk_arguments(&mut self, args: &Arguments) {
-        for a in args
+    fn walk_parameters(&mut self, parameters: &Parameters) {
+        for a in parameters
             .posonlyargs
             .iter()
-            .chain(args.args.iter())
-            .chain(args.kwonlyargs.iter())
+            .chain(parameters.args.iter())
+            .chain(parameters.kwonlyargs.iter())
         {
-            if let Some(annotation) = &a.def.annotation {
+            if let Some(annotation) = &a.parameter.annotation {
                 self.walk_expr(annotation);
             }
             if let Some(default) = &a.default {
                 self.walk_expr(default);
             }
         }
-        if let Some(vararg) = &args.vararg {
+        if let Some(vararg) = &parameters.vararg {
             if let Some(annotation) = &vararg.annotation {
                 self.walk_expr(annotation);
             }
         }
-        if let Some(kwarg) = &args.kwarg {
+        if let Some(kwarg) = &parameters.kwarg {
             if let Some(annotation) = &kwarg.annotation {
                 self.walk_expr(annotation);
             }
@@ -964,19 +983,19 @@ impl<'a> DeadCodeVisitor<'a> {
     fn walk_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Name(n) => {
-                self.handle_name(&n.id, n.ctx, n.range().start(), n.range().end());
+                self.handle_name(n.id.as_str(), n.ctx, n.range().start(), n.range().end());
             }
             Expr::Attribute(a) => {
                 self.handle_attribute(&a.value, &a.attr, a.ctx, a.range().start(), a.range().end());
                 self.walk_expr(&a.value);
             }
             Expr::Call(c) => {
-                self.handle_call(&c.func, &c.args, &c.keywords);
+                self.handle_call(&c.func, &c.arguments.args, &c.arguments.keywords);
                 self.walk_expr(&c.func);
-                for arg in &c.args {
+                for arg in c.arguments.args.iter() {
                     self.walk_expr(arg);
                 }
-                for kw in &c.keywords {
+                for kw in &c.arguments.keywords {
                     self.walk_expr(&kw.value);
                 }
             }
@@ -991,25 +1010,35 @@ impl<'a> DeadCodeVisitor<'a> {
                 }
             }
             Expr::UnaryOp(u) => self.walk_expr(&u.operand),
-            Expr::NamedExpr(n) => {
+            Expr::Named(n) => {
                 self.walk_expr(&n.target);
                 self.walk_expr(&n.value);
             }
             Expr::Lambda(l) => {
-                self.walk_arguments(&l.args);
+                // `parameters` is `None` for a bare `lambda: ...`, where
+                // Python still supplies an empty `arguments` node.
+                if let Some(parameters) = &l.parameters {
+                    self.walk_parameters(parameters);
+                }
                 self.walk_expr(&l.body);
             }
-            Expr::IfExp(e) => {
+            Expr::If(e) => {
                 self.walk_expr(&e.test);
                 self.walk_expr(&e.body);
                 self.walk_expr(&e.orelse);
             }
             Expr::Dict(d) => {
-                for k in d.keys.iter().flatten() {
-                    self.walk_expr(k);
+                // ruff pairs keys with values in one `items` list where
+                // Python has parallel `keys`/`values` lists; a `None` key is
+                // `**expansion`, matching Python's `None` key entry. Keys are
+                // walked before values to preserve the original visit order.
+                for item in &d.items {
+                    if let Some(key) = &item.key {
+                        self.walk_expr(key);
+                    }
                 }
-                for v in &d.values {
-                    self.walk_expr(v);
+                for item in &d.items {
+                    self.walk_expr(&item.value);
                 }
             }
             Expr::Set(s) => {
@@ -1026,11 +1055,16 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.walk_comprehensions(&c.generators);
             }
             Expr::DictComp(c) => {
-                self.walk_expr(&c.key);
+                // `key` is optional only to represent invalid source that
+                // ruff recovered from; a well-formed dict comprehension
+                // always has one.
+                if let Some(key) = &c.key {
+                    self.walk_expr(key);
+                }
                 self.walk_expr(&c.value);
                 self.walk_comprehensions(&c.generators);
             }
-            Expr::GeneratorExp(c) => {
+            Expr::Generator(c) => {
                 self.walk_expr(&c.elt);
                 self.walk_comprehensions(&c.generators);
             }
@@ -1047,15 +1081,23 @@ impl<'a> DeadCodeVisitor<'a> {
                     self.walk_expr(comparator);
                 }
             }
-            Expr::FormattedValue(f) => {
-                self.walk_expr(&f.value);
-                if let Some(spec) = &f.format_spec {
-                    self.walk_expr(spec);
+            // Python nests a `FormattedValue` inside a `JoinedStr`, both of
+            // which are plain `expr` nodes. ruff instead models an f-string as
+            // a list of parts (to support PEP 701 and implicit concatenation),
+            // so the interpolations have to be pulled out explicitly. Walking
+            // them is what makes a name used only inside an f-string —
+            // `f"{some_var}"` — count as a usage.
+            Expr::FString(f) => {
+                for element in f.value.elements() {
+                    self.walk_interpolated_element(element);
                 }
             }
-            Expr::JoinedStr(j) => {
-                for v in &j.values {
-                    self.walk_expr(v);
+            // PEP 750 t-strings (Python 3.14). Structurally identical to an
+            // f-string for our purposes: the interpolations are real
+            // expressions and the names in them are genuine usages.
+            Expr::TString(t) => {
+                for element in t.value.elements() {
+                    self.walk_interpolated_element(element);
                 }
             }
             Expr::Subscript(s) => {
@@ -1084,11 +1126,39 @@ impl<'a> DeadCodeVisitor<'a> {
                     self.walk_expr(step);
                 }
             }
-            Expr::Constant(_) => {}
+            // Python's single `ast.Constant` node, split by ruff into one
+            // variant per literal kind. None of them contain sub-expressions
+            // or names, so all are terminal — same as the old
+            // `Expr::Constant(_) => {}`.
+            Expr::StringLiteral(_)
+            | Expr::BytesLiteral(_)
+            | Expr::NumberLiteral(_)
+            | Expr::BooleanLiteral(_)
+            | Expr::NoneLiteral(_)
+            | Expr::EllipsisLiteral(_) => {}
+            // Jupyter-only; see the `Stmt::IpyEscapeCommand` arm.
+            Expr::IpyEscapeCommand(_) => {}
         }
     }
 
-    fn walk_comprehensions(&mut self, generators: &[rustpython_ast::Comprehension]) {
+    /// Walks one f-string/t-string element. Literal chunks hold no names;
+    /// interpolations hold a real expression plus an optional format spec,
+    /// which can itself contain further interpolations (`f"{x:{width}}"`).
+    fn walk_interpolated_element(&mut self, element: &InterpolatedStringElement) {
+        match element {
+            InterpolatedStringElement::Interpolation(interpolation) => {
+                self.walk_expr(&interpolation.expression);
+                if let Some(spec) = &interpolation.format_spec {
+                    for nested in &spec.elements {
+                        self.walk_interpolated_element(nested);
+                    }
+                }
+            }
+            InterpolatedStringElement::Literal(_) => {}
+        }
+    }
+
+    fn walk_comprehensions(&mut self, generators: &[ruff_python_ast::Comprehension]) {
         for gen in generators {
             self.walk_expr(&gen.target);
             self.walk_expr(&gen.iter);

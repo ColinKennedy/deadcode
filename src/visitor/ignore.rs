@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use rustpython_ast::Expr;
+use ruff_python_ast::Expr;
 
 use crate::utils::fnmatch;
 use crate::visitor::code_item::path_as_posix;
