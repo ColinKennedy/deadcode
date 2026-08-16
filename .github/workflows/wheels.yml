@@ -1,10 +1,15 @@
 name: Build Rust wheels
 
+# Wheels are the release artifact, so v* tags must build them -- previously
+# tags triggered nothing at all. `pull_request` is unfiltered for the same
+# reason as in ci.yml: a base-branch filter means PRs into staging or
+# test_release get no wheel build.
 on:
-  push:
-    branches: [ "main", "refactor_to_rust" ]
   pull_request:
+  push:
     branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
 
 permissions:
   contents: read

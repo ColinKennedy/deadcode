@@ -22,7 +22,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
+  # Version-independent checks: the Rust toolchain, plus the Python linters,
+  # which analyse source rather than run it.
+  static:
     name: ${{ matrix.check }}
     runs-on: ubuntu-latest
     strategy:
@@ -50,12 +52,29 @@ jobs:
         with:
           enable-cache: true
 
-      # scripts/check.py pins the interpreter it hands to uv, but installing it
-      # here means the Python jobs do not pay for a download on every run.
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
       # The exact command a developer runs locally.
       - run: python scripts/check.py ${{ matrix.check }}
+
+  # The legacy Python suite, once per supported interpreter.
+  #
+  # Keep this list in sync with PYTHON_VERSIONS in scripts/check.py and the
+  # classifiers in legacy-python/pyproject.toml. 3.14 matters most here: it
+  # removed ast.Str/Num/Bytes/NameConstant/Ellipsis, which the visitor used.
+  pytest:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # uv fetches the interpreter itself, so no setup-python step is needed
+      # and the matrix cannot drift from what the runner image happens to ship.
+      - run: python scripts/check.py pytest --python ${{ matrix.python }}

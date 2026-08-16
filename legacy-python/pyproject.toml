@@ -18,9 +18,14 @@ classifiers = [
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
+    # Kept in sync with PYTHON_VERSIONS in scripts/check.py and the pytest
+    # matrix in .github/workflows/ci.yml -- every version listed here is
+    # actually exercised by CI.
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
     "tomli>=2.0.1"
