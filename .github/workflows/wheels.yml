@@ -109,5 +109,10 @@ jobs:
           pattern: wheels-${{ contains(matrix.os, 'ubuntu') && 'linux-x86_64' || contains(matrix.os, 'windows') && 'windows-x64' || 'macos-x86_64' }}
           path: dist
           merge-multiple: true
-      - run: pip install --find-links dist deadcode
+      # The distribution is `lapsed`; the command it installs is `deadcode`.
+      # `--no-index` matters: this previously asked for `deadcode`, which does
+      # not match the built `lapsed-*.whl`, so pip fell through to PyPI and
+      # smoke-tested an unrelated package instead of this build. Forbidding the
+      # index makes that failure loud rather than silent.
+      - run: pip install --no-index --find-links dist lapsed
       - run: deadcode --version

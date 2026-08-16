@@ -232,22 +232,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
-name = "deadcode"
-version = "3.0.1"
-dependencies = [
- "clap",
- "once_cell",
- "rayon",
- "regex",
- "ruff_python_ast",
- "ruff_python_parser",
- "ruff_text_size",
- "similar",
- "tempfile",
- "toml",
-]
-
-[[package]]
 name = "derive-where"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -408,6 +392,22 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "lapsed"
+version = "3.0.1"
+dependencies = [
+ "clap",
+ "once_cell",
+ "rayon",
+ "regex",
+ "ruff_python_ast",
+ "ruff_python_parser",
+ "ruff_text_size",
+ "similar",
+ "tempfile",
+ "toml",
+]
 
 [[package]]
 name = "libc"

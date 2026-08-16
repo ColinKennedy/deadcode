@@ -1,5 +1,8 @@
 [package]
-name = "deadcode"
+# Packaging identity, matching the PyPI distribution in pyproject.toml.
+# The command users type and the crate name used in `use deadcode::...` are
+# set by [[bin]] and [lib] below and deliberately stay `deadcode`.
+name = "lapsed"
 version = "3.0.1"
 edition = "2021"
 rust-version = "1.95"
