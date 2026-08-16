@@ -1,7 +1,11 @@
 //! Port of `tests/fix/test_empty_files.py`, `tests/fix/test_unreachable_code.py`,
-//! and `tests/fix/test_unused_imports.py` (the last documents a known-buggy
-//! "dangling empty import stub" behavior that must be reproduced, not fixed —
-//! see `remove_file_parts_from_content.rs`'s module doc comment).
+//! and `tests/fix/test_unused_imports.py`.
+//!
+//! The last of those documented a "dangling empty import stub" defect that the
+//! port originally reproduced for parity. It is now fixed — emitting invalid
+//! Python from `--fix` is not a quirk worth preserving — so the test below
+//! asserts the statement is deleted outright. See
+//! `remove_file_parts_from_content.rs`'s module doc comment.
 
 mod common;
 use common::Project;
@@ -77,12 +81,13 @@ mod unreachable_code_is_not_removed {
     }
 }
 
-/// Documents a known-buggy behavior in the Python original (`# TODO: empty
-/// imports statements should be removed as well.`): removing every name from
-/// a parenthesized multi-import statement leaves a dangling empty stub
-/// instead of deleting the whole statement. Reproduced here, not fixed.
+/// Regression: removing every name from a parenthesized multi-import
+/// statement must delete the whole statement, not leave `from file1 import (`
+/// / `)` behind. The Python original left the stub (`# TODO: empty imports
+/// statements should be removed as well.`), which produces a file that no
+/// longer parses.
 #[test]
-fn unused_imports_leave_dangling_empty_stub() {
+fn emptied_import_statement_is_removed_entirely() {
     let p = Project::new();
     p.write(
         "file1.py",
@@ -102,8 +107,59 @@ fn unused_imports_leave_dangling_empty_stub() {
     assert!(result.contains("DC07 Import `xyz`"));
 
     let updated = p.read("file2.py");
-    // The `used` import/call survive; the fully-emptied parenthesized
-    // import leaves a dangling stub rather than being deleted outright.
+    // The `used` import and its call survive untouched...
+    assert!(updated.contains("from file1 import used"));
     assert!(updated.contains("used()"));
-    assert!(updated.contains("from file1 import ("));
+    // ...and the emptied statement is gone in full — no opening `from ... (`,
+    // no orphaned closing paren, no bare `import`.
+    assert!(
+        !updated.contains("from file1 import ("),
+        "dangling open stub left behind:\n{updated}"
+    );
+    for line in updated.lines() {
+        assert_ne!(line.trim(), ")", "orphaned closing paren:\n{updated}");
+        assert_ne!(
+            line.trim(),
+            "import",
+            "bare `import` left behind:\n{updated}"
+        );
+    }
+}
+
+/// The single-line forms of the same defect. Each of these previously left
+/// behind a stub (`import `, `from foo import `) that is not valid Python.
+#[test]
+fn emptied_single_line_imports_are_removed_entirely() {
+    for source in [
+        "import os\nprint(1)\n",
+        "from foo import bar\nprint(1)\n",
+        "import os.path\nprint(1)\n",
+        "import os as o\nprint(1)\n",
+        "from . import thing\nprint(1)\n",
+    ] {
+        let p = Project::new();
+        p.write("mod.py", source);
+        p.run(&["mod.py", "--no-color", "--fix"]);
+        let updated = p.read("mod.py");
+        assert_eq!(
+            updated, "print(1)\n",
+            "expected the import statement to be removed outright, from: {source:?}"
+        );
+    }
+}
+
+/// Every unused name on one line must be removed, not just the first.
+/// Previously `import os, sys` (both unused) removed only `os`.
+#[test]
+fn all_unused_names_on_one_line_are_removed() {
+    let p = Project::new();
+    p.write("mod.py", "import os, sys\nprint(1)\n");
+    p.run(&["mod.py", "--no-color", "--fix"]);
+    assert_eq!(p.read("mod.py"), "print(1)\n");
+
+    // ...while a name that IS used on that same line survives.
+    let p2 = Project::new();
+    p2.write("mod.py", "import os, sys\nprint(sys.path)\n");
+    p2.run(&["mod.py", "--no-color", "--fix"]);
+    assert_eq!(p2.read("mod.py"), "import sys\nprint(sys.path)\n");
 }
