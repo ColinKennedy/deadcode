@@ -1,5 +1,10 @@
 [project]
-name = "deadcode"
+# Must match `DISTRIBUTION_NAME` in deadcode/__init__.py, which resolves
+# __version__ through installed package metadata. This said "deadcode" while
+# __init__ looked up "lapsed", so importing the package raised
+# PackageNotFoundError even after a successful install — the PyPI rename
+# updated the root manifest but not this one.
+name = "lapsed"
 version = "2.4.1"
 authors = [
     {name = "Albertas Gimbutas", email = "albertasgim@gmail.com"},
