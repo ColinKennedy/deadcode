@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "lapsed"
-version = "3.0.0"
+version = "3.0.1"
 description = "Find and remove dead code in Python codebases (Rust implementation)."
 readme = "README.md"
 license = { text = "AGPL-3.0-only" }
