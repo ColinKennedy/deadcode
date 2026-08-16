@@ -65,11 +65,16 @@ fn a_nonexistent_second_path_does_not_affect_the_first() {
     assert!(result.contains("unused_global_variable"));
 }
 
+/// An unparseable file must not crash the run — but it must not pass silently
+/// either. `Some("")` is the "nothing more to print, but exit non-zero" shape,
+/// so CI can tell a skipped file apart from a clean one. It previously
+/// returned `None`, i.e. exit 0, which is what let the Python 3.14 parser gap
+/// go unnoticed.
 #[test]
-fn invalid_python_file_is_silently_ignored_not_a_crash() {
+fn invalid_python_file_fails_the_run_rather_than_passing_silently() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("invalid_file.py");
     std::fs::write(&file, "This is invalid python file content.").unwrap();
     let result = run(&[file.to_str().unwrap(), "--no-color"]);
-    assert_eq!(result, None);
+    assert_eq!(result, Some(String::new()));
 }

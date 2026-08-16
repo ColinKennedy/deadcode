@@ -22,8 +22,11 @@ mod imports {
     fn recovers_after_a_syntax_error_in_a_previous_run() {
         let p = Project::new();
         p.write("foo.py", "unused_var = None this is syntax error");
-        assert_eq!(p.run(&["foo.py", "--no-color"]), None);
+        // The unparseable run fails (`Some("")` = exit non-zero, nothing more
+        // on stdout) rather than reporting a clean pass...
+        assert_eq!(p.run(&["foo.py", "--no-color"]), Some(String::new()));
 
+        // ...and once the syntax is valid, analysis resumes normally.
         p.write("foo.py", "unused_var = None\n");
         let result = p.run(&["foo.py", "--no-color"]).unwrap();
         assert!(result.contains("DC01 Variable `unused_var`"));

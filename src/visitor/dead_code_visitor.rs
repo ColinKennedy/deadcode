@@ -84,6 +84,14 @@ pub struct DeadCodeVisitor<'a> {
     defined_vars: Vec<CodeItem>,
     pub unused_file: Vec<CodeItem>,
 
+    /// Files that could not be parsed and were therefore skipped entirely.
+    ///
+    /// Skipping is silent as far as the *findings* go — an unanalysable file
+    /// simply contributes nothing — which meant a run over unparseable source
+    /// was indistinguishable from a clean one. Recording them lets the CLI
+    /// report a summary and fail the run instead.
+    pub parse_failures: Vec<PathBuf>,
+
     used_names: HashSet<String>,
 
     filename: PathBuf,
@@ -186,6 +194,7 @@ impl<'a> DeadCodeVisitor<'a> {
             defined_props: Vec::new(),
             defined_vars: Vec::new(),
             unused_file: Vec::new(),
+            parse_failures: Vec::new(),
             used_names: HashSet::new(),
             filename: PathBuf::new(),
             scope_parts: Vec::new(),
@@ -233,9 +242,14 @@ impl<'a> DeadCodeVisitor<'a> {
                         }
                     }
                     Err(_) => {
-                        if !self.args.count && !self.args.quiet {
-                            eprintln!("Error: Failed to parse {file_path} file, ignoring it.");
-                        }
+                        // Deliberately NOT gated on `--count`/`--quiet`, unlike
+                        // the Python original. Those flags exist to quiet the
+                        // *findings* on stdout; suppressing this too is what
+                        // let unparseable files vanish without a trace in CI.
+                        // It goes to stderr, so `--count`'s machine-readable
+                        // stdout stays clean.
+                        eprintln!("Error: Failed to parse {file_path} file, ignoring it.");
+                        self.parse_failures.push(PathBuf::from(file_path));
                     }
                 }
             } else {

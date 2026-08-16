@@ -65,6 +65,18 @@ pub fn main_with_config(
     visitor.visit_files(&filenames);
     let unused_names = visitor.get_unused_code_items();
 
+    // Files that couldn't be parsed contribute no findings, so without this a
+    // run over unparseable source looks exactly like a clean one. Summarize on
+    // stderr (each file already logged itself there during the walk), and
+    // below, fail the run even when nothing unused was found.
+    let parse_failure_count = visitor.parse_failures.len();
+    if parse_failure_count > 0 {
+        eprintln!(
+            "{parse_failure_count} file{} could not be parsed.",
+            if parse_failure_count == 1 { "" } else { "s" }
+        );
+    }
+
     let mut file_diff = String::new();
     if (args.fix || args.dry) && !unused_names.is_empty() {
         file_diff = fix_or_show_unused_code(&unused_names, &args);
@@ -77,6 +89,14 @@ pub fn main_with_config(
             format!("\n\n{file_diff}")
         };
         return Ok(Some(error_message + &suffix));
+    }
+
+    // No dead code, but files were skipped — the run did not actually verify
+    // what it was asked to. `Some("")` prints nothing further (the detail is
+    // already on stderr) while still exiting non-zero, the same shape `--quiet`
+    // uses to report findings silently.
+    if parse_failure_count > 0 {
+        return Ok(Some(String::new()));
     }
 
     if !args.count && !args.quiet {
