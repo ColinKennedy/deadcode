@@ -55,7 +55,7 @@ fn expand_tabs(doc: &[u8]) -> Vec<u8> {
         match b {
             b'\t' => {
                 let spaces = 8 - (col % 8);
-                out.extend(std::iter::repeat(b' ').take(spaces));
+                out.extend(std::iter::repeat_n(b' ', spaces));
                 col += spaces;
             }
             b'\n' => {
