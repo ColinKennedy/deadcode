@@ -25,18 +25,18 @@ from deadcode.visitor.ignore import (
     ERROR_CODES,
     IGNORED_VARIABLE_NAMES,
     PYTEST_USEFIXTURES_DECORATOR_NAMES,
-    _get_unused_items,
-    _match,
-    _match_many,
-    _assigns_special_variable__all__,
-    _ignore_class,
-    _ignore_import,
-    _ignore_function,
-    _ignore_method,
-    _ignore_override,
-    _ignore_pytest_fixture,
-    _ignore_variable,
-    _is_self_attribute,
+    get_unused_items,
+    match,
+    match_many,
+    assigns_special_variable__all__,
+    ignore_class,
+    ignore_import,
+    ignore_function,
+    ignore_method,
+    ignore_override,
+    ignore_pytest_fixture,
+    ignore_variable,
+    is_self_attribute,
 )
 
 logger = getLogger()
@@ -153,31 +153,31 @@ class DeadCodeVisitor(ast.NodeVisitor):
 
     @property
     def unused_classes(self) -> Iterable[CodeItem]:
-        return _get_unused_items(self.defined_classes, self.used_names)
+        return get_unused_items(self.defined_classes, self.used_names)
 
     @property
     def unused_funcs(self) -> Iterable[CodeItem]:
-        return _get_unused_items(self.defined_funcs, self.used_names)
+        return get_unused_items(self.defined_funcs, self.used_names)
 
     @property
     def unused_imports(self) -> Iterable[CodeItem]:
-        return _get_unused_items(self.defined_imports, self.used_names)
+        return get_unused_items(self.defined_imports, self.used_names)
 
     @property
     def unused_methods(self) -> Iterable[CodeItem]:
-        return _get_unused_items(self.defined_methods, self.used_names)
+        return get_unused_items(self.defined_methods, self.used_names)
 
     @property
     def unused_props(self) -> Iterable[CodeItem]:
-        return _get_unused_items(self.defined_props, self.used_names)
+        return get_unused_items(self.defined_props, self.used_names)
 
     @property
     def unused_vars(self) -> Iterable[CodeItem]:
-        return _get_unused_items(self.defined_vars, self.used_names)
+        return get_unused_items(self.defined_vars, self.used_names)
 
     @property
     def unused_attrs(self) -> Iterable[CodeItem]:
-        return _get_unused_items(self.defined_attrs, self.used_names)
+        return get_unused_items(self.defined_attrs, self.used_names)
 
     def _log(self, *args, file: Optional[TextIO] = None, force: bool = False) -> None:  # type: ignore
         if self.verbose or force:
@@ -206,7 +206,7 @@ class DeadCodeVisitor(ast.NodeVisitor):
                 self.defined_imports,
                 alias or name,
                 first_node=name_and_alias,
-                ignore=_ignore_import,
+                ignore=ignore_import,
             )
             if alias is not None:
                 self.add_used_name(name_and_alias.name)
@@ -265,8 +265,8 @@ class DeadCodeVisitor(ast.NodeVisitor):
         def ignored(lineno: int, type_: UnusedCodeType) -> bool:
             return bool(
                 (ignore and ignore(self.filename, name))
-                or _match(name, self.args.ignore_names)
-                or _match(self.filename, self.args.ignore_names_in_files)
+                or match(name, self.args.ignore_names)
+                or match(self.filename, self.args.ignore_names_in_files)
                 or self.should_ignore_new_definitions
                 or noqa.ignore_line(self.noqa_lines, lineno, ERROR_CODES[type_])
                 or self.tach_index.is_exposed(self.filename, name)
@@ -309,7 +309,7 @@ class DeadCodeVisitor(ast.NodeVisitor):
             self.defined_vars,
             name,
             node,
-            ignore=_ignore_variable,
+            ignore=ignore_variable,
         )
 
     # def visit_arg(self, node: ast.AST) -> None:
@@ -321,7 +321,7 @@ class DeadCodeVisitor(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if isinstance(node.ctx, ast.Store):
-            if self.args.ignore_non_self_attributes and not _is_self_attribute(node):
+            if self.args.ignore_non_self_attributes and not is_self_attribute(node):
                 return
             self._define(self.defined_attrs, node.attr, node)
         elif isinstance(node.ctx, ast.Load):
@@ -425,11 +425,11 @@ class DeadCodeVisitor(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         for decorator in node.decorator_list:
             self._track_usefixtures_mark(decorator)
-            if _match(utils.get_decorator_name(decorator), self.ignore_decorators):  # type: ignore
+            if match(utils.get_decorator_name(decorator), self.ignore_decorators):  # type: ignore
                 self._log(f'Ignoring class "{node.name}" (decorator whitelisted)')
                 break
         else:
-            self._define(self.defined_classes, node.name, node, ignore=_ignore_class)
+            self._define(self.defined_classes, node.name, node, ignore=ignore_class)
 
     def visit_FunctionDef(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
         decorator_names = [utils.get_decorator_name(decorator) for decorator in node.decorator_list]  # type: ignore
@@ -445,18 +445,18 @@ class DeadCodeVisitor(ast.NodeVisitor):
         else:
             type_ = 'function'
 
-        if any(_match(name, self.ignore_decorators) for name in decorator_names):
+        if any(match(name, self.ignore_decorators) for name in decorator_names):
             self._log(f'Ignoring {type_} "{node.name}" (decorator whitelisted)')
-        elif _ignore_pytest_fixture(self.filename, decorator_names):
+        elif ignore_pytest_fixture(self.filename, decorator_names):
             self._log(f'Ignoring {type_} "{node.name}" (pytest fixture)')
-        elif _ignore_override(decorator_names):
+        elif ignore_override(decorator_names):
             self._log(f'Ignoring {type_} "{node.name}" (typing.override)')
         elif type_ == 'property':
             self._define(self.defined_props, node.name, node)
         elif type_ == 'method':
-            self._define(self.defined_methods, node.name, node, ignore=_ignore_method)
+            self._define(self.defined_methods, node.name, node, ignore=ignore_method)
         else:
-            self._define(self.defined_funcs, node.name, node, ignore=_ignore_function)
+            self._define(self.defined_funcs, node.name, node, ignore=ignore_function)
 
     def visit_If(self, node: ast.If) -> None:
         self._handle_conditional_node(node, 'if')
@@ -478,7 +478,7 @@ class DeadCodeVisitor(ast.NodeVisitor):
             self._define_variable(node.id, node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        if _assigns_special_variable__all__(node):
+        if assigns_special_variable__all__(node):
             assert isinstance(node.value, (ast.List, ast.Tuple))
             for elt in node.value.elts:
                 if isinstance(elt, ast.Str):
@@ -507,10 +507,10 @@ class DeadCodeVisitor(ast.NodeVisitor):
         should_turn_off_ignore_new_definitions = False
         if (
             # Name is in ignore_definitions
-            node_name and _match(node_name, self.args.ignore_definitions)
+            node_name and match(node_name, self.args.ignore_definitions)
         ) or (
             # Class inherits from ignore_definitions_if_inherits_from
-            inherits_from and _match_many(inherits_from, self.args.ignore_definitions_if_inherits_from)
+            inherits_from and match_many(inherits_from, self.args.ignore_definitions_if_inherits_from)
         ):
             if not self.should_ignore_new_definitions:
                 self.should_ignore_new_definitions = True
@@ -538,7 +538,7 @@ class DeadCodeVisitor(ast.NodeVisitor):
             was_scope_increased = False
 
         # Class inherits from ignore_bodies_if_inherits_from
-        if inherits_from and _match_many(inherits_from, self.args.ignore_bodies_if_inherits_from):
+        if inherits_from and match_many(inherits_from, self.args.ignore_bodies_if_inherits_from):
             if not self.should_ignore_new_definitions:
                 self.should_ignore_new_definitions = True
                 should_turn_off_ignore_new_definitions = True

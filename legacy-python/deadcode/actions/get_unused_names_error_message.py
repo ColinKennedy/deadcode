@@ -2,7 +2,7 @@ from typing import Iterable, Optional
 
 from deadcode.data_types import Args
 from deadcode.visitor.code_item import CodeItem
-from deadcode.visitor.ignore import _match
+from deadcode.visitor.ignore import match
 
 
 def get_unused_names_error_message(unused_names: Iterable[CodeItem], args: Args) -> Optional[str]:
@@ -19,7 +19,7 @@ def get_unused_names_error_message(unused_names: Iterable[CodeItem], args: Args)
 
     messages = []
     for item in unused_names:
-        if not args.only or _match(item.filename, args.only):
+        if not args.only or match(item.filename, args.only):
             message = f'{item.filename_with_position} \033[91m{item.error_code}\033[0m '
             message += item.message or (
                 f"{item.type_.replace('_', ' ').capitalize()} " f"`\033[1m{item.name}\033[0m` " f"is never used"

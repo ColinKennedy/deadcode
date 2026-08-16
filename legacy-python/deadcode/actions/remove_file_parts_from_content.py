@@ -3,28 +3,28 @@ from typing import List, Optional, TypeVar
 
 from deadcode.data_types import Part
 
-T = TypeVar('T')
+_T = TypeVar('_T')
 
 
-def list_get(list_: List[T], index: int) -> Optional[T]:
+def _list_get(list_: List[_T], index: int) -> Optional[_T]:
     if len(list_) > index:
         return list_[index]
     return None
 
 
-def ends_with_semicolon(line: bytes) -> bool:
+def _ends_with_semicolon(line: bytes) -> bool:
     return line.strip().endswith(b':')
 
 
-def indentation_is_not_childs(previous_line: bytes, current_line: bytes) -> bool:
-    return len(get_indentation(previous_line)) >= len(get_indentation(current_line))
+def _indentation_is_not_childs(previous_line: bytes, current_line: bytes) -> bool:
+    return len(_get_indentation(previous_line)) >= len(_get_indentation(current_line))
 
 
-def get_indentation(line: bytes) -> bytes:
+def _get_indentation(line: bytes) -> bytes:
     return bytes(re.findall(b'^\\s*', line)[0])
 
 
-def remove_as_from_end(line: bytes) -> bytes:
+def _remove_as_from_end(line: bytes) -> bytes:
     if not (line_rstrip := line.rstrip()).endswith(b'as'):
         return line
 
@@ -34,7 +34,7 @@ def remove_as_from_end(line: bytes) -> bytes:
     return line
 
 
-def remove_comma_from_begining(line: bytes) -> bytes:
+def _remove_comma_from_begining(line: bytes) -> bytes:
     if not line.lstrip().startswith(b','):
         return line
 
@@ -58,7 +58,7 @@ def remove_file_parts_from_content(content_lines: List[bytes], unused_file_parts
 
     for current_lineno, line in enumerate(content_lines, start=1):
         from_line, to_line, from_col, to_col = 0, 0, 0, 0
-        if unused_part := list_get(unused_file_parts, unused_part_index):
+        if unused_part := _list_get(unused_file_parts, unused_part_index):
             from_line, to_line, from_col, to_col = unused_part
 
         # Skip lines, which have to be ignored.
@@ -67,7 +67,7 @@ def remove_file_parts_from_content(content_lines: List[bytes], unused_file_parts
 
         # Is it first line, which have to be ignored?
         elif current_lineno == from_line:
-            indentation_of_first_removed_line = get_indentation(line)
+            indentation_of_first_removed_line = _get_indentation(line)
 
             if from_line == to_line:
                 # TODO: this check is a workaround for an assignment expression.
@@ -77,7 +77,7 @@ def remove_file_parts_from_content(content_lines: List[bytes], unused_file_parts
                 else:
                     # TODO: should apply `as` removal rule only for particular expression type only
                     # as well as comma removal.
-                    line = remove_as_from_end(line[:from_col]) + remove_comma_from_begining(line[to_col:])
+                    line = _remove_as_from_end(line[:from_col]) + _remove_comma_from_begining(line[to_col:])
 
                 unused_part_index += 1
 
@@ -131,14 +131,14 @@ def remove_file_parts_from_content(content_lines: List[bytes], unused_file_parts
                 # Add pass if needed - if its a file end we should also check if pass have to be added.
                 next_line_after_removed_block = line
 
-                if ends_with_semicolon(previous_non_removed_line):
-                    if indentation_is_not_childs(
+                if _ends_with_semicolon(previous_non_removed_line):
+                    if _indentation_is_not_childs(
                         previous_line=previous_non_removed_line, current_line=next_line_after_removed_block
                     ):
                         updated_content_lines.append(indentation_of_first_removed_line + b'pass\n')
 
                     # Add empty lines
-                    if indentation_is_not_childs(
+                    if _indentation_is_not_childs(
                         previous_line=previous_non_removed_line, current_line=next_line_after_removed_block
                     ):
                         # Add lines after
@@ -160,7 +160,7 @@ def remove_file_parts_from_content(content_lines: List[bytes], unused_file_parts
             updated_content_lines.append(line)
 
     if was_block_removed:
-        if ends_with_semicolon(previous_non_removed_line):
+        if _ends_with_semicolon(previous_non_removed_line):
             updated_content_lines.append(indentation_of_first_removed_line + b'pass\n')
 
     return updated_content_lines

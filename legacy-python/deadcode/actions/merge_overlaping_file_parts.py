@@ -2,7 +2,7 @@ from typing import List, Optional, Tuple
 from deadcode.data_types import Part
 
 
-def does_include(bigger_part: Part, smaller_part: Part) -> bool:
+def _does_include(bigger_part: Part, smaller_part: Part) -> bool:
     line_start_b, line_end_b, col_start_b, col_end_b = bigger_part
     line_start_s, line_end_s, col_start_s, col_end_s = smaller_part
 
@@ -13,7 +13,7 @@ def does_include(bigger_part: Part, smaller_part: Part) -> bool:
     return bool(starts_later and ends_faster)
 
 
-def sort_parts(bigger_part: Part, smaller_part: Part) -> Tuple[Part, Part]:
+def _sort_parts(bigger_part: Part, smaller_part: Part) -> Tuple[Part, Part]:
     """Returns code part which begins first following by another code part."""
     # TODO: Column should go first (tuple comparison would be possible)
     line_start_b, line_end_b, col_start_b, col_end_b = bigger_part
@@ -25,8 +25,8 @@ def sort_parts(bigger_part: Part, smaller_part: Part) -> Tuple[Part, Part]:
     return bigger_part, smaller_part
 
 
-def does_overlap(bigger_part: Part, smaller_part: Part) -> bool:
-    bigger_part, smaller_part = sort_parts(bigger_part, smaller_part)
+def _does_overlap(bigger_part: Part, smaller_part: Part) -> bool:
+    bigger_part, smaller_part = _sort_parts(bigger_part, smaller_part)
 
     line_start_b, line_end_b, col_start_b, col_end_b = bigger_part
     line_start_s, line_end_s, col_start_s, col_end_s = smaller_part
@@ -35,8 +35,8 @@ def does_overlap(bigger_part: Part, smaller_part: Part) -> bool:
     return bool((line_end_b > line_start_s) or ((line_end_b == line_start_s) and (col_end_b > col_start_s)))
 
 
-def merge_parts(p1: Part, p2: Part) -> Optional[Part]:
-    p1, p2 = sort_parts(p1, p2)
+def _merge_parts(p1: Part, p2: Part) -> Optional[Part]:
+    p1, p2 = _sort_parts(p1, p2)
 
     line_start1, line_end1, col_start1, col_end1 = p1
     line_start2, line_end2, col_start2, col_end2 = p2
@@ -66,11 +66,11 @@ def merge_overlaping_file_parts(overlaping_file_parts: List[Part]) -> List[Part]
         merged_part = None
         merged_with_index = None
         for j, p2 in enumerate(non_overlaping_file_parts):
-            if does_include(p2, p1):
+            if _does_include(p2, p1):
                 break
 
-            if does_overlap(p2, p1):
-                merged_part = merge_parts(p2, p1)
+            if _does_overlap(p2, p1):
+                merged_part = _merge_parts(p2, p1)
                 merged_with_index = j
                 break
         else:

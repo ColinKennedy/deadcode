@@ -15,29 +15,29 @@ logger = getLogger()
 
 
 @dataclass
-class TachInterface:
+class _TachInterface:
     expose: List[str]
     from_patterns: Optional[List[str]] = None
 
 
 @dataclass
-class TachModule:
+class _TachModule:
     path_patterns: List[str]
     unchecked: bool = False
 
 
 @dataclass
-class TachConfig:
+class _TachConfig:
     source_roots: List[Path]
     project_root: Optional[Path] = None
-    modules: List[TachModule] = field(default_factory=list)
-    interfaces: List[TachInterface] = field(default_factory=list)
+    modules: List[_TachModule] = field(default_factory=list)
+    interfaces: List[_TachInterface] = field(default_factory=list)
 
 
-class TachIndex:
+class _TachIndex:
     """Answers dead-code-relevant questions derived from one or more tach.toml files."""
 
-    def __init__(self, configs: List[TachConfig]) -> None:
+    def __init__(self, configs: List[_TachConfig]) -> None:
         self._configs = configs
 
     def is_outside_source_roots(self, path: Path) -> bool:
@@ -92,7 +92,7 @@ class TachIndex:
         return False
 
 
-def load_tach_index(tach_config_paths: Iterable[str]) -> TachIndex:
+def load_tach_index(tach_config_paths: Iterable[str]) -> _TachIndex:
     # find_python_filenames() and DeadCodeVisitor.__init__() both load the
     # tach index from the same args.tach_config, so cache it per path set to
     # avoid re-parsing (and re-globbing for tach.domain.toml files) twice.
@@ -100,7 +100,7 @@ def load_tach_index(tach_config_paths: Iterable[str]) -> TachIndex:
 
 
 @lru_cache(maxsize=None)
-def _load_tach_index_cached(tach_config_paths: Tuple[str, ...]) -> TachIndex:
+def _load_tach_index_cached(tach_config_paths: Tuple[str, ...]) -> _TachIndex:
     configs = []
     for raw_path in tach_config_paths:
         path = Path(raw_path).resolve()
@@ -108,10 +108,10 @@ def _load_tach_index_cached(tach_config_paths: Tuple[str, ...]) -> TachIndex:
             logger.error(f'Error: tach config {path} could not be found.')
             continue
         configs.append(_parse_tach_toml(path))
-    return TachIndex(configs)
+    return _TachIndex(configs)
 
 
-def _parse_tach_toml(path: Path) -> TachConfig:
+def _parse_tach_toml(path: Path) -> _TachConfig:
     with open(path, 'rb') as f:
         data = tomllib.load(f)
 
@@ -119,7 +119,7 @@ def _parse_tach_toml(path: Path) -> TachConfig:
     raw_source_roots = data.get('source_roots') or ['.']
     source_roots = [(project_root / root).resolve() for root in raw_source_roots]
 
-    config = TachConfig(source_roots=source_roots, project_root=project_root)
+    config = _TachConfig(source_roots=source_roots, project_root=project_root)
     config.modules.extend(_extract_modules(data))
     config.interfaces.extend(_extract_interfaces(data))
 
@@ -132,7 +132,7 @@ def _parse_tach_toml(path: Path) -> TachConfig:
     return config
 
 
-def _extract_modules(data: Dict[str, Any]) -> List[TachModule]:
+def _extract_modules(data: Dict[str, Any]) -> List[_TachModule]:
     modules = []
     for raw in data.get('modules', []):
         if 'paths' in raw:
@@ -141,22 +141,22 @@ def _extract_modules(data: Dict[str, Any]) -> List[TachModule]:
             patterns = [raw['path']]
         else:
             continue
-        modules.append(TachModule(path_patterns=patterns, unchecked=bool(raw.get('unchecked', False))))
+        modules.append(_TachModule(path_patterns=patterns, unchecked=bool(raw.get('unchecked', False))))
     return modules
 
 
-def _extract_interfaces(data: Dict[str, Any]) -> List[TachInterface]:
+def _extract_interfaces(data: Dict[str, Any]) -> List[_TachInterface]:
     interfaces = []
     for raw in data.get('interfaces', []):
         expose = list(raw.get('expose', []))
         if not expose:
             continue
         from_patterns = list(raw['from']) if 'from' in raw else None
-        interfaces.append(TachInterface(expose=expose, from_patterns=from_patterns))
+        interfaces.append(_TachInterface(expose=expose, from_patterns=from_patterns))
     return interfaces
 
 
-def _merge_domain_toml(config: TachConfig, domain_file: Path, source_root: Path) -> None:
+def _merge_domain_toml(config: _TachConfig, domain_file: Path, source_root: Path) -> None:
     with open(domain_file, 'rb') as f:
         data = tomllib.load(f)
 
@@ -184,7 +184,7 @@ def _merge_domain_toml(config: TachConfig, domain_file: Path, source_root: Path)
 
     root_table = data.get('root')
     if isinstance(root_table, dict) and root_table.get('unchecked'):
-        config.modules.append(TachModule(path_patterns=[domain_root_dotted], unchecked=True))
+        config.modules.append(_TachModule(path_patterns=[domain_root_dotted], unchecked=True))
 
 
 def _dotted_dir_path(directory: Path, source_root: Path) -> str:
@@ -251,7 +251,5 @@ def _try_compile_regex(pattern: str) -> Optional[re.Pattern[str]]:
 
 def _match_any_regex(patterns: Iterable[str], value: str) -> bool:
     return any(
-        compiled.fullmatch(value)
-        for pattern in patterns
-        if (compiled := _try_compile_regex(pattern)) is not None
+        compiled.fullmatch(value) for pattern in patterns if (compiled := _try_compile_regex(pattern)) is not None
     )

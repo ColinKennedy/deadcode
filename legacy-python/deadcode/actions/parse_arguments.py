@@ -244,7 +244,7 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
             parsed_args[arg_name] = flatten_lists_of_comma_separated_values(parsed_args.get(arg_name))
 
     # Extend the Args with the values provided in the pyproject.toml
-    for key, item in parse_pyproject_toml().items():
+    for key, item in _parse_pyproject_toml().items():
         if key in parsed_args:
             parsed_args[key].extend(item)
 
@@ -255,7 +255,7 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
     return Args(**parsed_args)
 
 
-def parse_pyproject_toml() -> Dict[str, Any]:
+def _parse_pyproject_toml() -> Dict[str, Any]:
     """Parse a pyproject toml file, pulling out relevant parts for Black.
 
     If parsing fails, will raise a tomllib.TOMLDecodeError.

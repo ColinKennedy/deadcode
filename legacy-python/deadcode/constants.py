@@ -17,7 +17,7 @@ UnusedCodeType = Literal[
 ]
 
 
-UnusedCodeErrorCode = Literal[
+_UnusedCodeErrorCode = Literal[
     'DC01',
     'DC02',
     'DC03',
@@ -33,7 +33,7 @@ UnusedCodeErrorCode = Literal[
 ]
 
 
-ERROR_TYPE_TO_ERROR_CODE: Dict[UnusedCodeType, UnusedCodeErrorCode] = {
+ERROR_TYPE_TO_ERROR_CODE: Dict[UnusedCodeType, _UnusedCodeErrorCode] = {
     'variable': 'DC01',
     'function': 'DC02',
     'class': 'DC03',

@@ -8,19 +8,19 @@ from deadcode.visitor.code_item import CodeItem
 
 
 IGNORED_VARIABLE_NAMES = {'object', 'self'}
-PYTEST_FUNCTION_NAMES = {
+_PYTEST_FUNCTION_NAMES = {
     'setup_module',
     'teardown_module',
     'setup_function',
     'teardown_function',
 }
-PYTEST_METHOD_NAMES = {
+_PYTEST_METHOD_NAMES = {
     'setup_class',
     'teardown_class',
     'setup_method',
     'teardown_method',
 }
-PYTEST_FIXTURE_DECORATOR_NAMES = {
+_PYTEST_FIXTURE_DECORATOR_NAMES = {
     '@pytest.fixture',
     '@pytest_asyncio.fixture',
     '@fixture',
@@ -30,7 +30,7 @@ PYTEST_USEFIXTURES_DECORATOR_NAMES = {
     '@mark.usefixtures',
     '@usefixtures',
 }
-OVERRIDE_DECORATOR_NAMES = {
+_OVERRIDE_DECORATOR_NAMES = {
     '@typing.override',
     '@typing_extensions.override',
     '@override',
@@ -52,7 +52,7 @@ ERROR_CODES = {
 }
 
 
-def _get_unused_items(defined_items: Iterable[CodeItem], used_names: Set[str]) -> Iterable[CodeItem]:
+def get_unused_items(defined_items: Iterable[CodeItem], used_names: Set[str]) -> Iterable[CodeItem]:
     unused_items = [item for item in defined_items if item.name not in used_names]
     unused_items.sort(key=lambda item: item.name.lower())
     return unused_items
@@ -62,7 +62,7 @@ def _is_special_name(name: str) -> bool:
     return name.startswith('__') and name.endswith('__')
 
 
-def _match(name: Union[str, Path], patterns: Iterable[str], case: bool = True) -> bool:
+def match(name: Union[str, Path], patterns: Iterable[str], case: bool = True) -> bool:
     func = fnmatchcase if case else fnmatch
     # .as_posix() (not str()) for Path names, so a pattern like '*/tests/*'
     # matches consistently regardless of the OS's native path separator.
@@ -70,8 +70,8 @@ def _match(name: Union[str, Path], patterns: Iterable[str], case: bool = True) -
     return any(func(name_str, pattern) for pattern in patterns)
 
 
-def _match_many(names: Union[Iterable[str], Iterable[Path]], patterns: Iterable[str], case: bool = True) -> bool:
-    return any(_match(name, patterns, case) for name in names)
+def match_many(names: Union[Iterable[str], Iterable[Path]], patterns: Iterable[str], case: bool = True) -> bool:
+    return any(match(name, patterns, case) for name in names)
 
 
 @lru_cache(maxsize=None)
@@ -79,7 +79,7 @@ def _is_test_file(filename: Path) -> bool:
     # Called once per definition (function/class/method) in a file, so cache
     # per-filename: `filename.resolve()` is a filesystem syscall and the
     # answer never changes for repeated calls with the same file.
-    return _match(
+    return match(
         filename.resolve(),
         ['*/test/*', '*/tests/*', '*/test*.py', '*[-_]test.py'],
         case=False,
@@ -90,18 +90,18 @@ def _is_conftest_file(filename: Path) -> bool:
     return filename.name == 'conftest.py'
 
 
-def _assigns_special_variable__all__(node: ast.Assign) -> bool:
+def assigns_special_variable__all__(node: ast.Assign) -> bool:
     assert isinstance(node, ast.Assign)
     return isinstance(node.value, (ast.List, ast.Tuple)) and any(
         target.id == '__all__' for target in node.targets if isinstance(target, ast.Name)
     )
 
 
-def _ignore_class(filename: Path, class_name: str) -> bool:
+def ignore_class(filename: Path, class_name: str) -> bool:
     return _is_test_file(filename) and 'Test' in class_name
 
 
-def _ignore_import(filename: Path, import_name: str) -> bool:
+def ignore_import(filename: Path, import_name: str) -> bool:
     """
     Ignore star-imported names since we can't detect whether they are used.
     Ignore imports from __init__.py files since they're commonly used to
@@ -110,9 +110,9 @@ def _ignore_import(filename: Path, import_name: str) -> bool:
     return filename.name == '__init__.py' or import_name == '*'
 
 
-def _ignore_function(filename: Path, function_name: str) -> bool:
+def ignore_function(filename: Path, function_name: str) -> bool:
     return (
-        (function_name in PYTEST_FUNCTION_NAMES or function_name.startswith('test_')) and _is_test_file(filename)
+        (function_name in _PYTEST_FUNCTION_NAMES or function_name.startswith('test_')) and _is_test_file(filename)
     ) or _ignore_pytest_hook(filename, function_name)
 
 
@@ -126,7 +126,7 @@ def _ignore_pytest_hook(filename: Path, function_name: str) -> bool:
     return _is_conftest_file(filename) and function_name.startswith('pytest_')
 
 
-def _ignore_pytest_fixture(filename: Path, decorator_names: Iterable[str]) -> bool:
+def ignore_pytest_fixture(filename: Path, decorator_names: Iterable[str]) -> bool:
     """
     Pytest fixtures are consumed by name-matching (as a test's parameter, via
     `autouse=True`, `@pytest.mark.usefixtures`, or `request.getfixturevalue()`),
@@ -137,34 +137,34 @@ def _ignore_pytest_fixture(filename: Path, decorator_names: Iterable[str]) -> bo
     Fixtures defined elsewhere must be exempted explicitly, e.g. via
     --ignore-names-if-decorated-with.
     """
-    return (_is_conftest_file(filename) or _is_test_file(filename)) and _match_many(
-        decorator_names, PYTEST_FIXTURE_DECORATOR_NAMES
+    return (_is_conftest_file(filename) or _is_test_file(filename)) and match_many(
+        decorator_names, _PYTEST_FIXTURE_DECORATOR_NAMES
     )
 
 
-def _ignore_override(decorator_names: Iterable[str]) -> bool:
+def ignore_override(decorator_names: Iterable[str]) -> bool:
     """
     `@typing.override` (and `@typing_extensions.override`) marks a method as
     overriding one declared on a base class. The base class's method is what
     calling code actually calls, so this override is used even though nothing
     calls it by its own name directly.
     """
-    return _match_many(decorator_names, OVERRIDE_DECORATOR_NAMES)
+    return match_many(decorator_names, _OVERRIDE_DECORATOR_NAMES)
 
 
-def _ignore_method(filename: Path, method_name: str) -> bool:
+def ignore_method(filename: Path, method_name: str) -> bool:
     return _is_special_name(method_name) or (
-        (method_name in PYTEST_METHOD_NAMES or method_name.startswith('test_')) and _is_test_file(filename)
+        (method_name in _PYTEST_METHOD_NAMES or method_name.startswith('test_')) and _is_test_file(filename)
     )
 
 
-def _is_self_attribute(node: ast.Attribute) -> bool:
+def is_self_attribute(node: ast.Attribute) -> bool:
     """Whether an attribute assignment target is `self.attr` (as opposed to
     e.g. `foo.attr`, where `foo` is some other object)."""
     return isinstance(node.value, ast.Name) and node.value.id == 'self'
 
 
-def _ignore_variable(filename: Path, varname: str) -> bool:
+def ignore_variable(filename: Path, varname: str) -> bool:
     """
     Ignore _ (Python idiom), _x (pylint convention) and
     __x__ (special variable or method), but not __x.

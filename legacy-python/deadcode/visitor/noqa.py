@@ -2,7 +2,7 @@ from collections import defaultdict
 import re
 from typing import Dict, List, Set
 
-NOQA_REGEXP = re.compile(
+_NOQA_REGEXP = re.compile(
     # Use the same regex as flake8 does.
     # https://github.com/pycqa/flake8/blob/main/src/flake8/defaults.py
     # We're looking for items that look like this:
@@ -14,7 +14,7 @@ NOQA_REGEXP = re.compile(
     re.IGNORECASE,
 )
 
-NOQA_CODE_MAP = {
+_NOQA_CODE_MAP = {
     # flake8 F401: module imported but unused.
     b'F401': b'DC07',
     # flake8 F841: local variable is assigned to but never used.
@@ -55,10 +55,10 @@ def _parse_error_codes(matches_dict: Dict[str, bytes]) -> List[bytes]:
 def parse_noqa(code: bytes) -> Dict[bytes, Set[int]]:
     noqa_lines = defaultdict(set)
     for lineno, line in enumerate(code.split(b'\n'), start=1):
-        match = NOQA_REGEXP.search(line)
+        match = _NOQA_REGEXP.search(line)
         if match:
             for error_code in _parse_error_codes(match.groupdict()):
-                error_code = NOQA_CODE_MAP.get(error_code, error_code)
+                error_code = _NOQA_CODE_MAP.get(error_code, error_code)
                 noqa_lines[error_code].add(lineno)
     return noqa_lines
 

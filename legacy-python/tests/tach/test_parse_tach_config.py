@@ -2,10 +2,10 @@ from pathlib import Path
 from textwrap import dedent
 
 from deadcode.actions.parse_tach_config import (
-    TachConfig,
-    TachIndex,
-    TachInterface,
-    TachModule,
+    _TachConfig,
+    _TachIndex,
+    _TachInterface,
+    _TachModule,
     _dotted_glob_to_regex,
     _dotted_module_path,
     _match_any_dotted_glob,
@@ -77,7 +77,7 @@ class TestIsOutsideSourceRoots:
         assert index.is_outside_source_roots(tmp_path / 'some_other_directory' / 'mod.py') is False
 
     def test_no_tach_config_never_restricts(self, tmp_path: Path) -> None:
-        index = TachIndex(configs=[])
+        index = _TachIndex(configs=[])
 
         assert index.is_outside_source_roots(tmp_path / 'anything.py') is False
 
@@ -129,35 +129,35 @@ class TestDottedGlobMatching:
 
 class TestInterfaceExposure:
     def test_exposed_name_from_matching_module(self, tmp_path: Path) -> None:
-        config = TachConfig(
+        config = _TachConfig(
             source_roots=[tmp_path],
-            interfaces=[TachInterface(expose=['get_data'], from_patterns=['core'])],
+            interfaces=[_TachInterface(expose=['get_data'], from_patterns=['core'])],
         )
-        index = TachIndex([config])
+        index = _TachIndex([config])
 
         assert index.is_exposed(tmp_path / 'core.py', 'get_data')
         assert not index.is_exposed(tmp_path / 'core.py', 'other_name')
         assert not index.is_exposed(tmp_path / 'domain.py', 'get_data')
 
     def test_interface_without_from_applies_to_every_module(self, tmp_path: Path) -> None:
-        config = TachConfig(
+        config = _TachConfig(
             source_roots=[tmp_path],
-            interfaces=[TachInterface(expose=['PUBLIC'], from_patterns=None)],
+            interfaces=[_TachInterface(expose=['PUBLIC'], from_patterns=None)],
         )
-        index = TachIndex([config])
+        index = _TachIndex([config])
 
         assert index.is_exposed(tmp_path / 'core.py', 'PUBLIC')
         assert index.is_exposed(tmp_path / 'anything.py', 'PUBLIC')
 
     def test_matching_any_of_multiple_interfaces_is_sufficient(self, tmp_path: Path) -> None:
-        config = TachConfig(
+        config = _TachConfig(
             source_roots=[tmp_path],
             interfaces=[
-                TachInterface(expose=['read_data'], from_patterns=['api']),
-                TachInterface(expose=['write_data'], from_patterns=['api']),
+                _TachInterface(expose=['read_data'], from_patterns=['api']),
+                _TachInterface(expose=['write_data'], from_patterns=['api']),
             ],
         )
-        index = TachIndex([config])
+        index = _TachIndex([config])
 
         assert index.is_exposed(tmp_path / 'api.py', 'write_data')
 
@@ -169,11 +169,11 @@ class TestInterfaceExposure:
         # one of several source_roots; the other source_root has no such subpackage at all.
         backend = tmp_path / 'backend'
         frontend = tmp_path / 'frontend'
-        config = TachConfig(
+        config = _TachConfig(
             source_roots=[backend, frontend],
-            interfaces=[TachInterface(expose=['some_function'], from_patterns=['some.subpackage.module'])],
+            interfaces=[_TachInterface(expose=['some_function'], from_patterns=['some.subpackage.module'])],
         )
-        index = TachIndex([config])
+        index = _TachIndex([config])
 
         assert index.is_exposed(backend / 'some' / 'subpackage' / 'module.py', 'some_function')
 
@@ -186,32 +186,32 @@ class TestInterfaceExposure:
         # invalid regex syntax and used to make the interface silently never match.
         backend = tmp_path / 'backend'
         frontend = tmp_path / 'frontend'
-        config = TachConfig(
+        config = _TachConfig(
             source_roots=[backend, frontend],
-            interfaces=[TachInterface(expose=['get_data'], from_patterns=['pkg1.**'])],
+            interfaces=[_TachInterface(expose=['get_data'], from_patterns=['pkg1.**'])],
         )
-        index = TachIndex([config])
+        index = _TachIndex([config])
 
         assert index.is_exposed(backend / 'pkg1' / 'sub' / 'mod.py', 'get_data')
         assert not index.is_exposed(frontend / 'util.py', 'get_data')
 
     def test_file_outside_source_roots_is_never_exposed(self, tmp_path: Path) -> None:
-        config = TachConfig(
+        config = _TachConfig(
             source_roots=[tmp_path / 'src'],
-            interfaces=[TachInterface(expose=['.*'], from_patterns=None)],
+            interfaces=[_TachInterface(expose=['.*'], from_patterns=None)],
         )
-        index = TachIndex([config])
+        index = _TachIndex([config])
 
         assert not index.is_exposed(tmp_path / 'outside.py', 'anything')
 
 
 class TestUncheckedModules:
     def test_unchecked_module_matches(self, tmp_path: Path) -> None:
-        config = TachConfig(
+        config = _TachConfig(
             source_roots=[tmp_path],
-            modules=[TachModule(path_patterns=['parsing'], unchecked=True)],
+            modules=[_TachModule(path_patterns=['parsing'], unchecked=True)],
         )
-        index = TachIndex([config])
+        index = _TachIndex([config])
 
         assert index.is_unchecked(tmp_path / 'parsing.py')
         assert not index.is_unchecked(tmp_path / 'core.py')

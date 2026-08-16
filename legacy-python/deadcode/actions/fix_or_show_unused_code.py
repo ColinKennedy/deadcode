@@ -9,7 +9,7 @@ from deadcode.data_types import Args
 from deadcode.visitor.code_item import CodeItem
 from deadcode.utils.flatten_lists import flatten_list
 from deadcode.utils.add_colors_to_diff import add_colors_to_diff
-from deadcode.visitor.ignore import _match
+from deadcode.visitor.ignore import match
 
 
 def fix_or_show_unused_code(unused_items: Iterable[CodeItem], args: Args) -> str:
@@ -41,7 +41,7 @@ def fix_or_show_unused_code(unused_items: Iterable[CodeItem], args: Args) -> str
         updated_file_content_lines = remove_file_parts_from_content(file_content_lines, unused_file_parts)
         updated_file_content = b''.join(updated_file_content_lines)
         if updated_file_content.strip():
-            if not args.only or _match(filename, args.only):
+            if not args.only or match(filename, args.only):
                 if args.dry:
                     with open(filename, 'rb') as f:
                         filename_bytes = filename.encode()

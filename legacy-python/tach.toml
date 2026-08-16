@@ -1,0 +1,27 @@
+# Declares this package's genuine public interface.
+#
+# Read by `privata` (module-privacy checking) — and understood by deadcode
+# itself, which supports tach.toml `source_roots` and `interfaces`.
+#
+# Only symbols that privata *cannot* see are consumed belong here. Anything
+# that is merely unused should be made private instead, not exposed from this
+# file — that would hide the finding rather than fix it.
+
+# Equivalent to privata's default for this layout (no src/ directory), stated
+# explicitly so the package root is not inferred.
+source_roots = ["."]
+
+# The console-script entry point. Declared in pyproject.toml as
+# `deadcode = "deadcode.cli:main"` and invoked by the generated wrapper, so no
+# Python module ever imports it — privata sees zero cross-module references
+# and would flag it as privatisable.
+[[interfaces]]
+from = ["deadcode.cli"]
+expose = ["main"]
+
+# Test-support base class. It lives in production code (deadcode/utils/) but
+# every consumer is a test module, and privata deliberately excludes test files
+# from its analysis, so all of its references are invisible to the checker.
+[[interfaces]]
+from = ["deadcode.utils.base_test_case"]
+expose = ["BaseTestCase"]
