@@ -1,0 +1,160 @@
+name: Build Rust wheels
+
+# Wheels are the release artifact, so v* tags must build them -- previously
+# tags triggered nothing at all. `pull_request` is unfiltered for the same
+# reason as in ci.yml: a base-branch filter means PRs into staging or
+# test_release get no wheel build.
+on:
+  pull_request:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: cargo test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --all-features
+
+  linux:
+    name: wheel (linux ${{ matrix.target }})
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build manylinux wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: auto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: dist/*.whl
+
+  windows:
+    name: wheel (windows ${{ matrix.target }})
+    needs: test
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x64, x86]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.target }}
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target == 'x64' && 'x86_64-pc-windows-msvc' || 'i686-pc-windows-msvc' }}
+          args: --release --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-${{ matrix.target }}
+          path: dist/*.whl
+
+  macos:
+    name: wheel (macos ${{ matrix.target }})
+    needs: test
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.target }}
+          path: dist/*.whl
+
+  # Publishing to real PyPI is a deliberate, manual, credentialed step — not
+  # automated here. This job just proves every wheel actually installs and
+  # runs on its target platform.
+  smoke-test:
+    name: install & smoke test (${{ matrix.os }})
+    needs: [linux, windows, macos]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      # Runner and artifact are paired explicitly rather than derived from the
+      # OS name. A wheel only installs on a matching architecture, and the
+      # previous nested-ternary form hardcoded macos-x86_64 -- which broke once
+      # `macos-latest` became Apple Silicon (macos-26-arm64), since the x86_64
+      # wheel is not installable there. Pairing them here means adding a
+      # platform is one obvious edit instead of an easily-missed branch.
+      #
+      # Not every built wheel has a runner to test on: linux-aarch64,
+      # windows-x86, and (as of GitHub retiring free Intel macOS hosting
+      # entirely -- every x64 macOS label is now a paid large-runner, e.g.
+      # macos-15-intel/macos-14-large -- macos-x86_64) are shipped untested.
+      # macos-13 used to cover the x86_64 wheel, but that label has no runner
+      # left to schedule it on: the job just queues forever and gets
+      # auto-cancelled by GitHub after 24h, which is what happened here.
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: wheels-linux-x86_64
+          - os: windows-latest
+            artifact: wheels-windows-x64
+          # macos-latest tracks whatever Apple Silicon image GitHub currently
+          # calls "latest", so it catches drift early.
+          - os: macos-latest
+            artifact: wheels-macos-aarch64
+          # macos-15 is a hard-pinned Apple Silicon version (not a moving
+          # "-latest" symlink), so this job stays reproducible even if/when
+          # "latest" moves again.
+          - os: macos-15
+            artifact: wheels-macos-aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download this OS's wheel
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ matrix.artifact }}
+          path: dist
+          merge-multiple: true
+      # Fail loudly if the download produced nothing, rather than letting the
+      # install step report a confusing "no matching distribution".
+      - name: Verify a wheel was downloaded
+        shell: bash
+        run: |
+          ls -l dist
+          if [ "$(ls dist/*.whl 2>/dev/null | wc -l)" -eq 0 ]; then
+            echo "::error::no .whl in dist for ${{ matrix.artifact }}"
+            exit 1
+          fi
+      # The distribution is `lapsed`; the command it installs is `deadcode`.
+      # `--no-index` matters: this previously asked for `deadcode`, which does
+      # not match the built `lapsed-*.whl`, so pip fell through to PyPI and
+      # smoke-tested an unrelated package instead of this build. Forbidding the
+      # index makes that failure loud rather than silent.
+      - run: pip install --no-index --find-links dist lapsed
+      - run: deadcode --version

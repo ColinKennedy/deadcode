@@ -1,0 +1,80 @@
+name: CI
+
+# Runs on every pull request regardless of base branch, and on v* tags.
+#
+# Deliberately NOT restricted to `branches: [main]` the way the older workflows
+# are: this project develops through staging/test_release/feature branches, and
+# a base-branch filter means a PR into anything but main gets no CI at all.
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+  # Manual runs, useful for checking a branch before opening the PR.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same PR supersedes the old run; tag builds are never
+# cancelled, since those gate a release.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Version-independent checks: the Rust toolchain, plus the Python linters,
+  # which analyse source rather than run it.
+  static:
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Report every failing check in one run, rather than hiding the rest
+      # behind whichever fails first.
+      fail-fast: false
+      matrix:
+        check: [fmt, clippy, test, ruff, ruff-format, mypy, privata]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Only the checks that need them, so the Python jobs stay lean.
+          components: ${{ (matrix.check == 'fmt' && 'rustfmt') || (matrix.check == 'clippy' && 'clippy') || '' }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.check }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The exact command a developer runs locally.
+      - run: python scripts/check.py ${{ matrix.check }}
+
+  # The legacy Python suite, once per supported interpreter.
+  #
+  # Keep this list in sync with PYTHON_VERSIONS in scripts/check.py and the
+  # classifiers in legacy-python/pyproject.toml. 3.14 matters most here: it
+  # removed ast.Str/Num/Bytes/NameConstant/Ellipsis, which the visitor used.
+  pytest:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # uv fetches the interpreter itself, so no setup-python step is needed
+      # and the matrix cannot drift from what the runner image happens to ship.
+      - run: python scripts/check.py pytest --python ${{ matrix.python }}
