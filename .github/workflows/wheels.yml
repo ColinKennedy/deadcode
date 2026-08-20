@@ -108,23 +108,28 @@ jobs:
       # wheel is not installable there. Pairing them here means adding a
       # platform is one obvious edit instead of an easily-missed branch.
       #
-      # Not every built wheel has a runner to test on: linux-aarch64 and
-      # windows-x86 are still shipped untested.
+      # Not every built wheel has a runner to test on: linux-aarch64,
+      # windows-x86, and (as of GitHub retiring free Intel macOS hosting
+      # entirely -- every x64 macOS label is now a paid large-runner, e.g.
+      # macos-15-intel/macos-14-large -- macos-x86_64) are shipped untested.
+      # macos-13 used to cover the x86_64 wheel, but that label has no runner
+      # left to schedule it on: the job just queues forever and gets
+      # auto-cancelled by GitHub after 24h, which is what happened here.
       matrix:
         include:
           - os: ubuntu-latest
             artifact: wheels-linux-x86_64
           - os: windows-latest
             artifact: wheels-windows-x64
-          # macos-latest is Apple Silicon.
+          # macos-latest tracks whatever Apple Silicon image GitHub currently
+          # calls "latest", so it catches drift early.
           - os: macos-latest
             artifact: wheels-macos-aarch64
-          # macos-13 is the last Intel runner, and the only way to exercise the
-          # x86_64 macOS wheel — which was shipped completely untested before,
-          # since the old smoke test asked for it on an arm64 runner and pip
-          # quietly resolved something else entirely.
-          - os: macos-13
-            artifact: wheels-macos-x86_64
+          # macos-15 is a hard-pinned Apple Silicon version (not a moving
+          # "-latest" symlink), so this job stays reproducible even if/when
+          # "latest" moves again.
+          - os: macos-15
+            artifact: wheels-macos-aarch64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
