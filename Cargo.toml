@@ -3,7 +3,7 @@
 # The command users type and the crate name used in `use deadcode::...` are
 # set by [[bin]] and [lib] below and deliberately stay `deadcode`.
 name = "lapsed"
-version = "3.1.0"
+version = "3.2.0"
 edition = "2021"
 rust-version = "1.95"
 description = "Find and remove dead code in Python codebases."
