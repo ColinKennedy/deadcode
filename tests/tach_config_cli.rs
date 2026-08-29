@@ -39,6 +39,69 @@ fn name_not_covered_by_any_interface_is_still_reported() {
 }
 
 #[test]
+fn class_methods_exposed_via_dotted_interface_pattern_are_not_reported() {
+    let p = Project::new();
+    p.write(
+        "tach.toml",
+        "source_roots = [\".\"]\n\n[[interfaces]]\nexpose = [\"MyClassInterface._some_method\", \"MyClassInterface.get_data\"]\nfrom = [\"core\"]\n",
+    );
+    p.write(
+        "core.py",
+        "class MyClassInterface:\n    def _some_method(self):\n        return 1\n\n    @classmethod\n    def get_data(cls):\n        return 1\n\n    @staticmethod\n    def not_exposed():\n        return 1\n",
+    );
+    let tach = p.path_str("tach.toml");
+    let core = p.path_str("core.py");
+    let result = p
+        .run(&[&core, "--tach-config", &tach, "--no-color"])
+        .unwrap();
+    assert!(!result.contains("_some_method"));
+    assert!(!result.contains("get_data"));
+    // Not listed in `expose`, so still reported as unused.
+    assert!(result.contains("not_exposed"));
+    assert!(result.contains("DC04"));
+}
+
+#[test]
+fn dotted_interface_pattern_does_not_expose_same_method_on_other_classes() {
+    let p = Project::new();
+    p.write(
+        "tach.toml",
+        "source_roots = [\".\"]\n\n[[interfaces]]\nexpose = [\"MyClassInterface.get_data\"]\nfrom = [\"core\"]\n",
+    );
+    p.write(
+        "core.py",
+        "class MyClassInterface:\n    def get_data(self):\n        return 1\n\nclass OtherClass:\n    def get_data(self):\n        return 1\n",
+    );
+    let tach = p.path_str("tach.toml");
+    let core = p.path_str("core.py");
+    let result = p
+        .run(&[&core, "--tach-config", &tach, "--no-color"])
+        .unwrap();
+    assert!(result.contains("DC04"));
+    assert!(result.contains("OtherClass"));
+}
+
+#[test]
+fn dotted_interface_pattern_supports_glob_on_class_and_method() {
+    let p = Project::new();
+    p.write(
+        "tach.toml",
+        "source_roots = [\".\"]\n\n[[interfaces]]\nexpose = [\"*Interface.get_*\"]\nfrom = [\"core\"]\n",
+    );
+    p.write(
+        "core.py",
+        "class MyInterface:\n    def get_data(self):\n        return 1\n\n    def set_data(self, value):\n        self.value = value\n",
+    );
+    let tach = p.path_str("tach.toml");
+    let core = p.path_str("core.py");
+    let result = p
+        .run(&[&core, "--tach-config", &tach, "--no-color"])
+        .unwrap();
+    assert!(!result.contains("get_data"));
+    assert!(result.contains("set_data"));
+}
+
+#[test]
 fn file_under_unchecked_module_is_skipped_entirely() {
     let p = Project::new();
     p.write(
