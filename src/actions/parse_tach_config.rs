@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::utils::fnmatch;
 use crate::utils::path_utils::{resolve_path, strict_ancestors};
 
 #[derive(Debug, Clone)]
@@ -113,7 +114,13 @@ impl TachIndex {
         false
     }
 
-    pub fn is_exposed(&self, file: &Path, name: &str) -> bool {
+    /// `class_name` is the name of the class a method/property/attribute is
+    /// directly defined in (`None` for module-level definitions). It only
+    /// affects `expose` entries written as `ClassName.member` — see
+    /// `match_any_dotted_expose`. Plain (undotted) `expose` entries keep
+    /// matching by bare `name` alone, regardless of `class_name`, exactly as
+    /// before this was supported.
+    pub fn is_exposed(&self, file: &Path, class_name: Option<&str>, name: &str) -> bool {
         for config in &self.configs {
             let Some(module_path) = dotted_module_path(file, &config.source_roots) else {
                 continue;
@@ -123,7 +130,10 @@ impl TachIndex {
                     None => true,
                     Some(patterns) => match_any_dotted_glob(patterns, &module_path),
                 };
-                if adopts_interface && match_any_regex(&interface.expose, name) {
+                if adopts_interface
+                    && (match_any_regex(&interface.expose, name)
+                        || match_any_dotted_expose(&interface.expose, class_name, name))
+                {
                     return true;
                 }
             }
@@ -426,6 +436,31 @@ fn match_any_regex(patterns: &[String], value: &str) -> bool {
         .any(|pattern| try_compile_regex(pattern).is_some_and(|re| re.is_match(value)))
 }
 
+/// Matches `expose` entries of the form `ClassPattern.MemberPattern`
+/// (e.g. `"MyClassInterface._some_method"`, `"MyClassInterface.*"`,
+/// `"*.get_data"`), letting class methods, classmethods, staticmethods and
+/// properties be exposed per-class rather than by bare name alone. Both
+/// halves are glob patterns (`fnmatch` semantics: `*`, `?`, `[seq]`), split
+/// on the first `.` in the entry. Entries without a `.`, or without a
+/// current class scope (`class_name` is `None`, i.e. the definition isn't
+/// directly inside a class body), never match here — they fall back to the
+/// existing bare-name regex matching in `is_exposed`.
+fn match_any_dotted_expose(patterns: &[String], class_name: Option<&str>, name: &str) -> bool {
+    let Some(class_name) = class_name else {
+        return false;
+    };
+    patterns.iter().any(|pattern| {
+        let Some((class_pattern, member_pattern)) = pattern.split_once('.') else {
+            return false;
+        };
+        if class_pattern.is_empty() || member_pattern.is_empty() {
+            return false;
+        }
+        fnmatch::fnmatchcase(class_name, class_pattern)
+            && fnmatch::fnmatchcase(name, member_pattern)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,8 +578,44 @@ mod tests {
         );
         write(&dir.path().join("core.py"), "");
         let index = load_tach_index(&[dir.path().join("tach.toml").to_string_lossy().to_string()]);
-        assert!(index.is_exposed(&dir.path().join("core.py"), "get_data"));
-        assert!(!index.is_exposed(&dir.path().join("core.py"), "helper"));
+        assert!(index.is_exposed(&dir.path().join("core.py"), None, "get_data"));
+        assert!(!index.is_exposed(&dir.path().join("core.py"), None, "helper"));
+    }
+
+    #[test]
+    fn class_method_interface_exposure_end_to_end() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir.path().join("tach.toml"),
+            "source_roots = [\".\"]\n\n[[interfaces]]\nexpose = [\"MyClassInterface._some_method\", \"MyClassInterface.get_data\"]\nfrom = [\"core\"]\n",
+        );
+        write(&dir.path().join("core.py"), "");
+        let index = load_tach_index(&[dir.path().join("tach.toml").to_string_lossy().to_string()]);
+        let file = dir.path().join("core.py");
+        assert!(index.is_exposed(&file, Some("MyClassInterface"), "_some_method"));
+        assert!(index.is_exposed(&file, Some("MyClassInterface"), "get_data"));
+        // Same method name on an unlisted class isn't exposed by a dotted entry.
+        assert!(!index.is_exposed(&file, Some("OtherClass"), "get_data"));
+        // A method not listed for the class isn't exposed either.
+        assert!(!index.is_exposed(&file, Some("MyClassInterface"), "other_method"));
+        // Module-level (no enclosing class) never matches a dotted entry.
+        assert!(!index.is_exposed(&file, None, "get_data"));
+    }
+
+    #[test]
+    fn class_method_interface_exposure_supports_glob_on_both_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir.path().join("tach.toml"),
+            "source_roots = [\".\"]\n\n[[interfaces]]\nexpose = [\"*Interface.get_*\"]\nfrom = [\"core\"]\n",
+        );
+        write(&dir.path().join("core.py"), "");
+        let index = load_tach_index(&[dir.path().join("tach.toml").to_string_lossy().to_string()]);
+        let file = dir.path().join("core.py");
+        assert!(index.is_exposed(&file, Some("MyInterface"), "get_data"));
+        assert!(index.is_exposed(&file, Some("OtherInterface"), "get_value"));
+        assert!(!index.is_exposed(&file, Some("MyInterface"), "set_data"));
+        assert!(!index.is_exposed(&file, Some("MyClass"), "get_data"));
     }
 
     #[test]
@@ -582,14 +653,14 @@ mod tests {
         // from=[""] resolves to the domain's own dotted root ("tach.filesystem")
         // — an exact (non-glob) pattern, so it exposes "api" for that module
         // itself (__init__.py) but not for nested child modules like service.py.
-        assert!(index.is_exposed(&dir.path().join("tach/filesystem/__init__.py"), "api"));
-        assert!(!index.is_exposed(&dir.path().join("tach/filesystem/service.py"), "api"));
+        assert!(index.is_exposed(&dir.path().join("tach/filesystem/__init__.py"), None, "api"));
+        assert!(!index.is_exposed(&dir.path().join("tach/filesystem/service.py"), None, "api"));
     }
 
     #[test]
     fn missing_tach_config_degrades_gracefully() {
         let index = load_tach_index(&["/definitely/does/not/exist/tach.toml".to_string()]);
         assert!(!index.is_unchecked(Path::new("/anything.py")));
-        assert!(!index.is_exposed(Path::new("/anything.py"), "anything"));
+        assert!(!index.is_exposed(Path::new("/anything.py"), None, "anything"));
     }
 }

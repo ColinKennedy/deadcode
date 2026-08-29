@@ -369,6 +369,15 @@ impl<'a> DeadCodeVisitor<'a> {
         let type_ = kind.unused_code_type();
         let error_code = type_.error_code();
 
+        // The class a method/property/attribute is directly defined in, for
+        // matching tach `expose` entries written as `ClassPattern.MemberPattern`
+        // (see `TachIndex::is_exposed`). `None` for anything not directly
+        // inside a class body (module-level functions, nested functions, ...).
+        let enclosing_class = self
+            .is_directly_in_class_body()
+            .then(|| self.scope_parts.last().cloned())
+            .flatten();
+
         // No-op for everything except decorated definitions.
         let start = self.definition_keyword_start(start, decorator_list);
 
@@ -389,7 +398,9 @@ impl<'a> DeadCodeVisitor<'a> {
             )
             || self.should_ignore_new_definitions
             || noqa::ignore_line(&self.noqa_lines, name_line as u32, error_code)
-            || self.tach_index.is_exposed(&self.filename, name);
+            || self
+                .tach_index
+                .is_exposed(&self.filename, enclosing_class.as_deref(), name);
 
         // Registered in the scope tree unconditionally (even if `ignored`) —
         // matches Python's `self.scopes.add(code_item)` running before the
