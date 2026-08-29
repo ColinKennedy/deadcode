@@ -32,6 +32,11 @@ pub const OVERRIDE_DECORATOR_NAMES: &[&str] = &[
     "@typing_extensions.override",
     "@override",
 ];
+/// Glob patterns, not literal names: the field name (`some_property` in
+/// `@some_property.default`) is arbitrary user code, unrelated to how
+/// `attrs`/`attr`'s `field`/`attrib`/`ib`/`define`/`attrs`/`s` were imported
+/// or aliased — see `ignore_attrs_field_hook`.
+pub const ATTRS_FIELD_HOOK_DECORATOR_PATTERNS: &[&str] = &["@*.default", "@*.validator"];
 
 fn is_special_name(name: &str) -> bool {
     name.starts_with("__") && name.ends_with("__")
@@ -95,6 +100,22 @@ pub fn ignore_override(decorator_names: &[String]) -> bool {
     fnmatch::match_many(decorator_names, OVERRIDE_DECORATOR_NAMES, true)
 }
 
+/// `@some_field.default` / `@some_field.validator` register an `attrs` field's
+/// default-value factory or validator: `attrs` calls these itself, by the
+/// field's own descriptor protocol, at class-creation/instantiation time —
+/// never by the method's own name — so they'd otherwise look unused.
+///
+/// The field variable's name (`some_field`) never depends on how `field`/
+/// `attrib`/`ib` (or the class decorator `define`/`attrs`/`s`) were imported
+/// or aliased, so matching the decorator's shape alone — an attribute access
+/// ending in `.default`/`.validator` — needs no import-alias tracking at all;
+/// `some_field = attrs.field(...)`, `from attrs import field as fizz` +
+/// `some_field = fizz(...)`, and every other spelling all produce the exact
+/// same `@some_field.default`/`@some_field.validator` decorator.
+pub fn ignore_attrs_field_hook(decorator_names: &[String]) -> bool {
+    fnmatch::match_many(decorator_names, ATTRS_FIELD_HOOK_DECORATOR_PATTERNS, true)
+}
+
 pub fn ignore_method(filename: &Path, method_name: &str) -> bool {
     is_special_name(method_name)
         || ((PYTEST_METHOD_NAMES.contains(&method_name) || method_name.starts_with("test_"))
@@ -142,6 +163,22 @@ mod tests {
         assert!(ignore_variable("__dunder__"));
         assert!(!ignore_variable("__partial"));
         assert!(!ignore_variable("normal_name"));
+    }
+
+    #[test]
+    fn attrs_field_hook_rules() {
+        assert!(ignore_attrs_field_hook(&[
+            "@some_property.default".to_string()
+        ]));
+        assert!(ignore_attrs_field_hook(&[
+            "@some_property.validator".to_string()
+        ]));
+        // The field's own name is arbitrary — no fixed list to match against.
+        assert!(ignore_attrs_field_hook(&["@fizz.default".to_string()]));
+        assert!(!ignore_attrs_field_hook(&["@property".to_string()]));
+        assert!(!ignore_attrs_field_hook(&[
+            "@some_property.other".to_string()
+        ]));
     }
 
     #[test]

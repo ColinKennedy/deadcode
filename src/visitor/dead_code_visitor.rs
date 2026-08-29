@@ -649,7 +649,8 @@ impl<'a> DeadCodeVisitor<'a> {
                 None,
             );
         } else if is_method {
-            let ignored = ignore::ignore_method(&filename, name_str);
+            let ignored = ignore::ignore_method(&filename, name_str)
+                || ignore::ignore_attrs_field_hook(&decorator_names);
             self.push_definition(
                 DefinedKind::Method,
                 name_str,
