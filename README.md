@@ -4,8 +4,8 @@
 
 <p align="center">
 <a href="https://github.com/pre-commit/pre-commit"><img src="https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit" alt="pre-commit" style="max-width:100%;"></a>
-<a href="https://pypi.org/project/deadcode/"><img alt="PyPI" src="https://img.shields.io/pypi/v/deadcode"></a>
-<a href="https://pepy.tech/project/deadcode"><img alt="Downloads" src="https://static.pepy.tech/badge/deadcode"></a>
+<a href="https://pypi.org/project/lapsed/"><img alt="PyPI" src="https://img.shields.io/pypi/v/lapsed"></a>
+<a href="https://pepy.tech/project/lapsed"><img alt="Downloads" src="https://static.pepy.tech/badge/lapsed"></a>
 <a href="https://github.com/albertas/deadcode/blob/main/LICENSE"><img alt="License: AGPLv3" src="https://raw.githubusercontent.com/albertas/deadcode/main/docs/_static/AGPLv3-license.svg"></a>
 <br/><a href='https://ko-fi.com/V7V21681GD' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 </p>
@@ -13,8 +13,10 @@
 
 ## Installation
 ```shell
-pip install deadcode
+pip install lapsed
 ```
+
+The package is `lapsed`; the command it installs is `deadcode`.
 
 ## Usage
 To see unused code findings:
@@ -65,8 +67,8 @@ Create a `.pre-commit-config.yaml` file in the root of your project directory, i
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
 repos:
-  - repo: https://github.com/albertas/deadcode
-    rev: 2.6.0
+  - repo: https://github.com/ColinKennedy/deadcode
+    rev: v3.2.1
     hooks:
       - id: deadcode
 ```

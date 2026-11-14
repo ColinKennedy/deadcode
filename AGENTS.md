@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 As of the `refactor_to_rust` branch, the implementation is **Rust**, not Python — see `RUST_PORT_PLAN.md` for the full rationale, architecture decisions, and phase-by-phase log of the port. The original Python implementation and its test suite live on under `legacy-python/` for reference; it is not built or shipped anymore. The CLI interface (flags, output format, exit codes) is unchanged from the Python version.
 
+- **Distribution:** published to PyPI as **`lapsed`** (the installed command stays `deadcode`). This fork is independent: changes are not offered back to `albertas/deadcode`, and upstream is tracked only through `legacy-python/` and the parity checks.
 - **Language:** Rust (edition 2021), packaged for PyPI via `maturin` with `bindings = "bin"` — the wheel ships a compiled native binary + console-script shim, no PyO3/Python bindings.
 - **Entry point:** `src/main.rs` → `deadcode::cli::print_main()`
 - **AST parsing:** `ruff_python_parser`/`ruff_python_ast` (Astral's parser, published on crates.io). This replaced `rustpython-parser`, whose newest release (0.4.0) tops out around Python 3.11 and could not parse 3.12+ source — see `src/actions/parse_abstract_syntax_tree.rs` for the specifics and `RUST_PORT_PLAN.md` for why the original choice was reversed.
@@ -26,8 +27,8 @@ cargo fmt                      # format
 To build and locally install the PyPI wheel:
 ```bash
 pip install maturin
-maturin build --release        # writes target/wheels/deadcode-*.whl
-pip install target/wheels/deadcode-*.whl
+maturin build --release        # writes target/wheels/lapsed-*.whl
+pip install target/wheels/lapsed-*.whl
 ```
 
 ## Architecture
