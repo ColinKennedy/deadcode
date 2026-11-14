@@ -2,8 +2,6 @@
 
 use std::collections::BTreeMap;
 
-use similar::TextDiff;
-
 use crate::actions::get_unused_import_parts::get_unused_import_parts;
 use crate::actions::merge_overlapping_file_parts::merge_overlapping_file_parts;
 use crate::actions::remove_file_parts_from_content::remove_file_parts_from_content;
@@ -11,6 +9,7 @@ use crate::constants::UnusedCodeType;
 use crate::data_types::{Args, Part};
 use crate::utils::add_colors_to_diff::add_colors_to_diff;
 use crate::utils::fnmatch;
+use crate::utils::unified_diff::unified_diff;
 use crate::visitor::code_item::{path_as_posix, CodeItem};
 
 /// Splits raw bytes into lines the same way Python's `f.readlines()` does:
@@ -33,15 +32,8 @@ fn readlines(content: &[u8]) -> Vec<Vec<u8>> {
     lines
 }
 
-fn render_diff(filename: &str, original: &[u8], updated: &[u8], args: &Args) -> Vec<u8> {
-    let old_text = String::from_utf8_lossy(original).into_owned();
-    let new_text = String::from_utf8_lossy(updated).into_owned();
-    let diff_bytes = TextDiff::from_lines(&old_text, &new_text)
-        .unified_diff()
-        .context_radius(3)
-        .header(filename, filename)
-        .to_string()
-        .into_bytes();
+fn render_diff(filename: &str, original: &[Vec<u8>], updated: &[Vec<u8>], args: &Args) -> Vec<u8> {
+    let diff_bytes = unified_diff(original, updated, filename);
     if args.no_color {
         diff_bytes
     } else {
@@ -102,8 +94,8 @@ pub fn fix_or_show_unused_code(unused_items: &[CodeItem], args: &Args) -> String
             if selected {
                 result.push(render_diff(
                     filename,
-                    &original_content,
-                    &updated_content,
+                    &file_content_lines,
+                    &updated_content_lines,
                     args,
                 ));
             }
@@ -112,8 +104,8 @@ pub fn fix_or_show_unused_code(unused_items: &[CodeItem], args: &Args) -> String
                 if args.dry {
                     result.push(render_diff(
                         filename,
-                        &original_content,
-                        &updated_content,
+                        &file_content_lines,
+                        &updated_content_lines,
                         args,
                     ));
                 } else if args.fix && std::fs::write(filename, &updated_content).is_err() {

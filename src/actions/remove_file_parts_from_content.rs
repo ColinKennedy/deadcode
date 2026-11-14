@@ -64,8 +64,32 @@ fn slice_from(line: &[u8], idx: u32) -> Vec<u8> {
     line[idx..].to_vec()
 }
 
+/// Whether `line` opens a block (ends with `:`), ignoring a trailing comment.
+///
+/// Upstream checks the raw line, so `class A:  # note` was not seen as
+/// opening a block -- emptying its body left invalid Python -- while the
+/// comment `# def f():` was, inserting a stray `pass` after it.
 fn ends_with_semicolon(line: &[u8]) -> bool {
-    strip(line).ends_with(b":")
+    strip(without_trailing_comment(line)).ends_with(b":")
+}
+
+/// Cuts a line at the `#` that starts its comment, skipping `#` inside
+/// single-line string literals.
+fn without_trailing_comment(line: &[u8]) -> &[u8] {
+    let mut quote: Option<u8> = None;
+    let mut escaped = false;
+    for (index, &byte) in line.iter().enumerate() {
+        match quote {
+            Some(_) if escaped => escaped = false,
+            Some(_) if byte == b'\\' => escaped = true,
+            Some(open) if byte == open => quote = None,
+            Some(_) => {}
+            None if byte == b'\'' || byte == b'"' => quote = Some(byte),
+            None if byte == b'#' => return &line[..index],
+            None => {}
+        }
+    }
+    line
 }
 
 fn get_indentation(line: &[u8]) -> Vec<u8> {

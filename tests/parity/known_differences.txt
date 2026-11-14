@@ -12,8 +12,9 @@ legacy-django dry  # intentional: upstream --dry deletes files it would empty; R
 legacy-fastapi dry  # intentional: upstream --dry deletes emptied files and leaves `: str` stubs
 legacy-fastapi_dependency_injection dry  # intentional: upstream --dry deletes emptied files and leaves `: str` stubs
 legacy-fastapi_features dry  # intentional: upstream --dry deletes emptied files and leaves `: str` stubs
-legacy-functions dry  # phase 4: unified-diff hunk grouping differs (similar vs difflib)
+legacy-functions dry  # intentional: upstream treats the comment `# def f():` as a block opener and adds `pass`
 legacy-subdir dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
 samename dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
 unicode dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
 fix_edge_cases dry  # intentional: upstream leaves `: int` / `+= 1` stubs behind
+commented_block_opener dry  # intentional: upstream misses `class A:  # note` as a block opener (invalid fix) and adds `pass` after `# def f():`
