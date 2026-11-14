@@ -4,8 +4,10 @@ use std::collections::BTreeMap;
 
 use similar::TextDiff;
 
+use crate::actions::get_unused_import_parts::get_unused_import_parts;
 use crate::actions::merge_overlapping_file_parts::merge_overlapping_file_parts;
 use crate::actions::remove_file_parts_from_content::remove_file_parts_from_content;
+use crate::constants::UnusedCodeType;
 use crate::data_types::{Args, Part};
 use crate::utils::add_colors_to_diff::add_colors_to_diff;
 use crate::utils::fnmatch;
@@ -31,6 +33,22 @@ fn readlines(content: &[u8]) -> Vec<Vec<u8>> {
     lines
 }
 
+fn render_diff(filename: &str, original: &[u8], updated: &[u8], args: &Args) -> Vec<u8> {
+    let old_text = String::from_utf8_lossy(original).into_owned();
+    let new_text = String::from_utf8_lossy(updated).into_owned();
+    let diff_bytes = TextDiff::from_lines(&old_text, &new_text)
+        .unified_diff()
+        .context_radius(3)
+        .header(filename, filename)
+        .to_string()
+        .into_bytes();
+    if args.no_color {
+        diff_bytes
+    } else {
+        add_colors_to_diff(&diff_bytes)
+    }
+}
+
 pub fn fix_or_show_unused_code(unused_items: &[CodeItem], args: &Args) -> String {
     // BTreeMap (not HashMap) to make grouping order deterministic
     // (alphabetical by filename), matching the practical effect Python gets
@@ -48,15 +66,24 @@ pub fn fix_or_show_unused_code(unused_items: &[CodeItem], args: &Args) -> String
     let mut result: Vec<Vec<u8>> = Vec::new();
 
     for (filename, file_items) in &filename_to_items {
-        let file_parts: Vec<Part> = file_items
-            .iter()
-            .flat_map(|item| item.code_parts.iter().copied())
-            .collect();
-        let unused_file_parts = merge_overlapping_file_parts(&file_parts);
-
         let Ok(original_content) = std::fs::read(filename) else {
             continue;
         };
+
+        // Imports get statement-aware parts, so removing a name also removes
+        // its comma, `;` separator, or the whole emptied statement.
+        let (import_items, other_items): (Vec<&CodeItem>, Vec<&CodeItem>) = file_items
+            .iter()
+            .copied()
+            .partition(|item| matches!(item.type_, UnusedCodeType::Import));
+        let mut file_parts: Vec<Part> = other_items
+            .iter()
+            .flat_map(|item| item.code_parts.iter().copied())
+            .collect();
+        if !import_items.is_empty() {
+            file_parts.extend(get_unused_import_parts(&original_content, &import_items));
+        }
+        let unused_file_parts = merge_overlapping_file_parts(&file_parts);
         let file_content_lines = readlines(&original_content);
 
         let updated_content_lines =
@@ -68,23 +95,27 @@ pub fn fix_or_show_unused_code(unused_items: &[CodeItem], args: &Args) -> String
         let is_blank = updated_content
             .iter()
             .all(|&b| matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c));
-        if !is_blank {
-            if args.only.is_empty() || fnmatch::match_any(filename, &args.only, true) {
+        let selected = args.only.is_empty() || fnmatch::match_any(filename, &args.only, true);
+        if is_blank && args.dry {
+            // Upstream deletes the emptied file even under `--dry`; a dry run
+            // must never touch the disk, so show the removal instead.
+            if selected {
+                result.push(render_diff(
+                    filename,
+                    &original_content,
+                    &updated_content,
+                    args,
+                ));
+            }
+        } else if !is_blank {
+            if selected {
                 if args.dry {
-                    let old_text = String::from_utf8_lossy(&original_content).into_owned();
-                    let new_text = String::from_utf8_lossy(&updated_content).into_owned();
-                    let diff = TextDiff::from_lines(&old_text, &new_text);
-                    let diff_text = diff
-                        .unified_diff()
-                        .context_radius(3)
-                        .header(filename, filename)
-                        .to_string();
-                    let diff_bytes = diff_text.into_bytes();
-                    if args.no_color {
-                        result.push(diff_bytes);
-                    } else {
-                        result.push(add_colors_to_diff(&diff_bytes));
-                    }
+                    result.push(render_diff(
+                        filename,
+                        &original_content,
+                        &updated_content,
+                        args,
+                    ));
                 } else if args.fix && std::fs::write(filename, &updated_content).is_err() {
                     continue;
                 }
@@ -105,7 +136,6 @@ pub fn fix_or_show_unused_code(unused_items: &[CodeItem], args: &Args) -> String
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use crate::constants::UnusedCodeType;
     use std::path::PathBuf;
 
     fn item(filename: &str, name: &str, type_: UnusedCodeType, part: Part) -> CodeItem {

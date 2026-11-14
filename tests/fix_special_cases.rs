@@ -231,3 +231,64 @@ fn all_unused_names_on_one_line_are_removed() {
     p2.run(&["mod.py", "--no-color", "--fix"]);
     assert_eq!(p2.read("mod.py"), "import sys\nprint(sys.path)\n");
 }
+
+/// `--fix` must leave valid Python. Each case below produced a syntax error
+/// before the upstream fixes were ported (or, for the last few, in upstream
+/// too).
+mod fix_keeps_valid_python {
+    use super::*;
+
+    fn fix(src: &str) -> String {
+        let p = Project::new();
+        p.write("foo.py", src);
+        p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        p.read("foo.py")
+    }
+
+    #[test]
+    fn multi_line_assignment_is_removed_whole() {
+        let fixed = fix("unused = [\n    1,\n    2,\n]\nused = 1\nprint(used)\n");
+        assert_eq!(fixed, "used = 1\nprint(used)\n");
+    }
+
+    #[test]
+    fn unused_names_leave_a_valid_parenthesized_import() {
+        let fixed = fix("from os import (\n    path,\n    sep,\n    getcwd,\n)\nprint(sep)\n");
+        assert_eq!(fixed, "from os import (\n    sep\n)\nprint(sep)\n");
+    }
+
+    #[test]
+    fn semicolon_separated_import_is_removed_with_its_comment() {
+        let fixed = fix("import sys, json; import re  # comment\nprint(json)\n");
+        assert_eq!(fixed, "import json\nprint(json)\n");
+    }
+
+    #[test]
+    fn annotated_and_augmented_assignments_are_removed_whole() {
+        let fixed = fix("class A:\n    count: int\n    label: str = \"x\"\n\n\nA\n");
+        assert_eq!(fixed, "class A:\n    pass\n\n\nA\n");
+
+        let fixed = fix("def f():\n    total = 0\n    total += 1\n    return 1\n\n\nf()\n");
+        assert_eq!(fixed, "def f():\n    return 1\n\n\nf()\n");
+    }
+
+    #[test]
+    fn emptied_class_body_before_a_removed_top_level_class_gets_an_indented_pass() {
+        let src = "class Kept:\n    def unused(self):\n        pass\n\n\nclass Unused:\n    pass\n\n\nKept\n";
+        let fixed = fix(src);
+        assert_eq!(fixed, "class Kept:\n    pass\n\n\nKept\n");
+    }
+}
+
+mod dry_run_never_touches_disk {
+    use super::*;
+
+    #[test]
+    fn a_file_dry_would_empty_is_shown_not_deleted() {
+        let p = Project::new();
+        p.write("foo.py", "def unused():\n    pass\n");
+        let result = p.run(&["foo.py", "--no-color", "--dry"]).unwrap();
+        assert!(result.contains("-def unused():"));
+        assert!(p.exists("foo.py"));
+    }
+}

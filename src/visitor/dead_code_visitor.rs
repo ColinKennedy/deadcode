@@ -16,7 +16,7 @@ use ruff_python_ast::{
     Alias, BoolOp, Decorator, Expr, ExprContext, Identifier, InterpolatedStringElement, Keyword,
     Operator, Parameters, Pattern, Stmt,
 };
-use ruff_text_size::{Ranged, TextSize};
+use ruff_text_size::{Ranged, TextRange, TextSize};
 
 use crate::actions::parse_abstract_syntax_tree::parse_abstract_syntax_tree;
 use crate::actions::parse_tach_config::TachIndex;
@@ -101,6 +101,12 @@ pub struct DeadCodeVisitor<'a> {
     source: String,
     /// Absolute import targets keyed by the local spelling used in this file.
     qualified_imports: HashMap<String, String>,
+    /// The whole statement to delete when the plain-name target currently
+    /// being walked turns out unused. Set only for a single-target assignment
+    /// spanning several lines, where cutting out just the name would leave the
+    /// value's continuation lines behind as invalid Python (upstream issue
+    /// #26).
+    assignment_removal_range: Option<TextRange>,
 }
 
 /// Extracts a `str` constant value, mirroring the several
@@ -244,6 +250,7 @@ impl<'a> DeadCodeVisitor<'a> {
             line_index: LineIndex::new(""),
             source: String::new(),
             qualified_imports: HashMap::new(),
+            assignment_removal_range: None,
         }
     }
 
@@ -351,12 +358,7 @@ impl<'a> DeadCodeVisitor<'a> {
     /// Record a DC09 finding. The caller chooses the precise source span to
     /// remove: a false condition removes the full statement, while an always
     /// true condition removes just its unreachable `else` suite.
-    fn add_unreachable_body(
-        &mut self,
-        name: &str,
-        range: ruff_text_size::TextRange,
-        message: &str,
-    ) {
+    fn add_unreachable_body(&mut self, name: &str, range: TextRange, message: &str) {
         let (line, column) = self.line_index.line_col(range.start());
         let (end_line, end_column) = self.line_index.line_col(range.end());
         if self.should_ignore_new_definitions
@@ -747,7 +749,51 @@ impl<'a> DeadCodeVisitor<'a> {
             return;
         }
         let ignored = ignore::ignore_variable(name);
+        let removal_range = self.assignment_removal_range.take();
+        let recorded_before = self.defined_vars.len();
         self.push_definition(DefinedKind::Variable, name, start, end, &[], ignored, None);
+        if let Some(range) = removal_range.filter(|_| self.defined_vars.len() > recorded_before) {
+            self.widen_last_variable_to(range);
+        }
+    }
+
+    /// Replaces the removal span of the variable just recorded with `range`,
+    /// keeping its reported position on the name.
+    fn widen_last_variable_to(&mut self, range: TextRange) {
+        let (line_start, col_start) = self.line_index.line_col(range.start());
+        let (line_end, col_end) = self.line_index.line_col(range.end());
+        if let Some(item) = self.defined_vars.last_mut() {
+            item.code_parts = vec![Part::new(
+                line_start as u32,
+                line_end as u32,
+                col_start as u32,
+                col_end as u32,
+            )];
+        }
+    }
+
+    /// Walks an assignment target, arranging for an unused plain-name target
+    /// to remove the whole statement when cutting out just the name would
+    /// leave invalid Python: any multi-line statement (upstream issue #26),
+    /// and every annotated or augmented one, whose `: int` / `+= 1` tail has
+    /// no leading `=` for the line remover to recognise.
+    fn walk_assignment_target(
+        &mut self,
+        target: &Expr,
+        statement: TextRange,
+        sole_target: bool,
+        always_whole: bool,
+    ) {
+        let (first_line, _) = self.line_index.line_col(statement.start());
+        let (last_line, _) = self.line_index.line_col(statement.end());
+        if sole_target
+            && matches!(target, Expr::Name(_))
+            && (always_whole || last_line > first_line)
+        {
+            self.assignment_removal_range = Some(statement);
+        }
+        self.walk_expr(target);
+        self.assignment_removal_range = None;
     }
 
     fn track_usefixtures_mark(&mut self, decorator: &Expr) {
@@ -1178,19 +1224,19 @@ impl<'a> DeadCodeVisitor<'a> {
                     }
                 }
                 for target in &a.targets {
-                    self.walk_expr(target);
+                    self.walk_assignment_target(target, a.range, a.targets.len() == 1, false);
                 }
                 self.walk_expr(&a.value);
             }
             Stmt::AnnAssign(a) => {
-                self.walk_expr(&a.target);
+                self.walk_assignment_target(&a.target, a.range, true, true);
                 self.walk_expr(&a.annotation);
                 if let Some(v) = &a.value {
                     self.walk_expr(v);
                 }
             }
             Stmt::AugAssign(a) => {
-                self.walk_expr(&a.target);
+                self.walk_assignment_target(&a.target, a.range, true, true);
                 self.walk_expr(&a.value);
             }
             Stmt::Return(r) => {
