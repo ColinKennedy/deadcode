@@ -98,7 +98,10 @@ def _pytest(version: str) -> list[str]:
     # raises on import without it.
     return [
         "uv", "run", "--quiet", "-p", version,
-        "--with", "pytest", "--with", "pytest-cov",
+        "--with", pinned("pytest"), "--with", pinned("pytest-cov"),
+        # The preserved upstream suite validates the repository's
+        # pre-commit configuration and imports PyYAML for that test.
+        "--with", pinned("pyyaml"),
         "pytest", "-q",
     ]
 
