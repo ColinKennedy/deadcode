@@ -45,6 +45,9 @@ enum DefinedKind {
     Method,
     Property,
     Variable,
+    /// A variable assigned directly in a class body: upstream's DC06
+    /// "unused name" rather than DC01.
+    ClassBodyName,
 }
 
 impl DefinedKind {
@@ -57,6 +60,7 @@ impl DefinedKind {
             DefinedKind::Method => UnusedCodeType::Method,
             DefinedKind::Property => UnusedCodeType::Property,
             DefinedKind::Variable => UnusedCodeType::Variable,
+            DefinedKind::ClassBodyName => UnusedCodeType::Name,
         }
     }
 }
@@ -107,6 +111,52 @@ pub struct DeadCodeVisitor<'a> {
     /// value's continuation lines behind as invalid Python (upstream issue
     /// #26).
     assignment_removal_range: Option<TextRange>,
+}
+
+/// Names loaded by the expressions inside string literals nested in
+/// `annotation`, following strings inside those strings up to `depth` levels.
+/// Mirrors upstream's `collect_names_from_annotation_strings`.
+fn annotation_string_names(annotation: &Expr, depth: u32) -> HashSet<String> {
+    use ruff_python_ast::visitor::{walk_expr, Visitor};
+
+    #[derive(Default)]
+    struct Collector {
+        strings: Vec<String>,
+        names: HashSet<String>,
+    }
+
+    impl<'a> Visitor<'a> for Collector {
+        fn visit_expr(&mut self, expr: &'a Expr) {
+            match expr {
+                Expr::StringLiteral(literal) => {
+                    self.strings.push(literal.value.to_str().to_string())
+                }
+                Expr::Name(name) if matches!(name.ctx, ExprContext::Load | ExprContext::Del) => {
+                    self.names.insert(name.id.to_string());
+                }
+                _ => {}
+            }
+            walk_expr(self, expr);
+        }
+    }
+
+    let mut outer = Collector::default();
+    outer.visit_expr(annotation);
+    let mut names = HashSet::new();
+    if depth == 0 {
+        return names;
+    }
+    for string in outer.strings {
+        let Ok(parsed) = ruff_python_parser::parse_expression(&string) else {
+            continue;
+        };
+        let expression = &parsed.syntax().body;
+        let mut inner = Collector::default();
+        inner.visit_expr(expression);
+        names.extend(inner.names);
+        names.extend(annotation_string_names(expression, depth - 1));
+    }
+    names
 }
 
 /// Extracts a `str` constant value, mirroring the several
@@ -358,9 +408,25 @@ impl<'a> DeadCodeVisitor<'a> {
     /// Record a DC09 finding. The caller chooses the precise source span to
     /// remove: a false condition removes the full statement, while an always
     /// true condition removes just its unreachable `else` suite.
-    fn add_unreachable_body(&mut self, name: &str, range: TextRange, message: &str) {
-        let (line, column) = self.line_index.line_col(range.start());
-        let (end_line, end_column) = self.line_index.line_col(range.end());
+    /// Records a DC09 finding.
+    ///
+    /// Upstream reports it at `position` (the last statement of the dead
+    /// body), honours `noqa` on the line of `first`, `position` and any
+    /// `extra_noqa_line` (the `else:` keyword), and removes `removal` -- or
+    /// nothing, where no removal keeps the code valid with its behaviour
+    /// unchanged.
+    fn add_unreachable_body(
+        &mut self,
+        name: &str,
+        first: TextSize,
+        position: TextSize,
+        removal: Option<TextRange>,
+        message: &str,
+        extra_noqa_line: Option<u32>,
+    ) {
+        let (first_line, _) = self.line_index.line_col(first);
+        let (line, column) = self.line_index.line_col(position);
+        let noqa_lines = [Some(first_line as u32), Some(line as u32), extra_noqa_line];
         if self.should_ignore_new_definitions
             || fnmatch::match_any(name, &self.args.ignore_names, true)
             || fnmatch::match_any(
@@ -368,20 +434,31 @@ impl<'a> DeadCodeVisitor<'a> {
                 &self.args.ignore_names_in_files,
                 true,
             )
-            || noqa::ignore_line(&self.noqa_lines, line as u32, "DC09")
+            || noqa_lines
+                .into_iter()
+                .flatten()
+                .any(|noqa_line| noqa::ignore_line(&self.noqa_lines, noqa_line, "DC09"))
         {
             return;
         }
+        let code_parts = removal
+            .map(|range| {
+                let (start_line, start_column) = self.line_index.line_col(range.start());
+                let (end_line, end_column) = self.line_index.line_col(range.end());
+                Part::new(
+                    start_line as u32,
+                    end_line as u32,
+                    start_column as u32,
+                    end_column as u32,
+                )
+            })
+            .into_iter()
+            .collect();
         self.unreachable_body.push(CodeItem::new(
             name.to_string(),
             UnusedCodeType::UnreachableBody,
             self.filename.clone(),
-            vec![Part::new(
-                line as u32,
-                end_line as u32,
-                column as u32,
-                end_column as u32,
-            )],
+            code_parts,
             (!self.scope_parts.is_empty()).then(|| self.scope_parts.join(".")),
             None,
             Some(line as u32),
@@ -390,13 +467,145 @@ impl<'a> DeadCodeVisitor<'a> {
         ));
     }
 
+    /// DC09 for an `if` (or, with `clauses` holding what follows it, an
+    /// `elif`). Upstream sees an `elif` as an `If` nested in `orelse`, so each
+    /// `elif` in a chain is checked as its own statement starting at its
+    /// keyword (`start`).
+    fn check_if_condition(
+        &mut self,
+        start: TextSize,
+        test: &Expr,
+        body: &[Stmt],
+        clauses: &[ruff_python_ast::ElifElseClause],
+        end: TextSize,
+    ) {
+        let (Some(first), Some(last)) = (body.first(), body.last()) else {
+            return;
+        };
+        match Self::conditional_outcome(test) {
+            Some(false) => {
+                // Upstream removes the whole statement, `elif`/`else`
+                // included, deleting reachable code. With clauses following,
+                // empty the body instead -- the remover puts `pass` there.
+                let removal = if clauses.is_empty() {
+                    TextRange::new(start, end)
+                } else {
+                    TextRange::new(first.start(), last.end())
+                };
+                self.add_unreachable_body(
+                    "if",
+                    start,
+                    last.start(),
+                    Some(removal),
+                    "Unsatisfiable `if` condition",
+                    None,
+                );
+            }
+            Some(true) => match clauses.first() {
+                // `elif`: everything from its keyword on is unreachable.
+                Some(clause) if clause.test.is_some() => self.add_unreachable_body(
+                    "else",
+                    clause.start(),
+                    clause.start(),
+                    Some(TextRange::new(clause.start(), end)),
+                    "Unreachable `else` block",
+                    None,
+                ),
+                Some(clause) => self.add_unreachable_else(clause.start(), &clause.body),
+                // Upstream removes the whole statement, body included, which
+                // deletes code that always runs. Report it, but leave the
+                // code alone: dedenting the body is not a removal.
+                None => self.add_unreachable_body(
+                    "if",
+                    start,
+                    start,
+                    None,
+                    "Redundant `if` condition",
+                    None,
+                ),
+            },
+            None => {}
+        }
+    }
+
+    /// An `else:` block that can never run, reported on its last statement.
+    fn add_unreachable_else(&mut self, else_keyword: TextSize, body: &[Stmt]) {
+        let (Some(first), Some(last)) = (body.first(), body.last()) else {
+            return;
+        };
+        let (else_line, _) = self.line_index.line_col(else_keyword);
+        self.add_unreachable_body(
+            "else",
+            first.start(),
+            last.start(),
+            Some(TextRange::new(first.start(), last.end())),
+            "Unreachable `else` block",
+            Some(else_line as u32),
+        );
+    }
+
+    /// Where the `else` keyword before `body` starts: the last `else` between
+    /// `after` and the body's first statement.
+    fn else_keyword_before(&self, after: TextSize, body: &[Stmt]) -> TextSize {
+        let Some(first) = body.first() else {
+            return after;
+        };
+        let between = &self.source[after.to_usize()..first.start().to_usize()];
+        between
+            .rfind("else")
+            .map_or(first.start(), |offset| after + TextSize::new(offset as u32))
+    }
+
+    /// The truth value of a constant `ast.literal_eval` would accept, or
+    /// `None` for anything it would reject.
+    fn literal_truth_value(expression: &Expr) -> Option<bool> {
+        use ruff_python_ast::{Number, UnaryOp};
+        match expression {
+            Expr::BooleanLiteral(value) => Some(value.value),
+            Expr::NoneLiteral(_) => Some(false),
+            Expr::NumberLiteral(value) => Some(match &value.value {
+                Number::Int(int) => *int != ruff_python_ast::Int::ZERO,
+                Number::Float(float) => *float != 0.0,
+                Number::Complex { real, imag } => *real != 0.0 || *imag != 0.0,
+            }),
+            Expr::StringLiteral(value) => Some(!value.value.to_str().is_empty()),
+            Expr::BytesLiteral(value) => Some(value.value.bytes().next().is_some()),
+            Expr::EllipsisLiteral(_) => Some(true),
+            Expr::UnaryOp(value)
+                if matches!(value.op, UnaryOp::USub | UnaryOp::UAdd)
+                    && matches!(value.operand.as_ref(), Expr::NumberLiteral(_)) =>
+            {
+                Self::literal_truth_value(&value.operand)
+            }
+            Expr::Tuple(value) => Self::container_truth_value(&value.elts),
+            Expr::List(value) => Self::container_truth_value(&value.elts),
+            Expr::Set(value) => Self::container_truth_value(&value.elts),
+            Expr::Dict(value) => value
+                .items
+                .iter()
+                .all(|item| {
+                    item.key
+                        .as_ref()
+                        .is_some_and(|key| Self::literal_truth_value(key).is_some())
+                        && Self::literal_truth_value(&item.value).is_some()
+                })
+                .then_some(!value.items.is_empty()),
+            _ => None,
+        }
+    }
+
+    fn container_truth_value(elements: &[Expr]) -> Option<bool> {
+        elements
+            .iter()
+            .all(|element| Self::literal_truth_value(element).is_some())
+            .then_some(!elements.is_empty())
+    }
+
     /// Mirror upstream's safe, conservative condition evaluator. Unknown
     /// expressions are substituted with both truth values, so only conditions
     /// that are provably true or false produce a finding.
     fn condition_truth_value(expression: &Expr, unknown_value: bool) -> bool {
         match expression {
-            Expr::BooleanLiteral(value) => value.value,
-            Expr::NoneLiteral(_) => false,
             Expr::BoolOp(value) => match value.op {
                 BoolOp::And => value
                     .values
@@ -410,7 +619,7 @@ impl<'a> DeadCodeVisitor<'a> {
             Expr::UnaryOp(value) if value.op == ruff_python_ast::UnaryOp::Not => {
                 !Self::condition_truth_value(&value.operand, !unknown_value)
             }
-            _ => unknown_value,
+            _ => Self::literal_truth_value(expression).unwrap_or(unknown_value),
         }
     }
 
@@ -740,7 +949,7 @@ impl<'a> DeadCodeVisitor<'a> {
             DefinedKind::Import => self.defined_imports.push(code_item),
             DefinedKind::Method => self.defined_methods.push(code_item),
             DefinedKind::Property => self.defined_props.push(code_item),
-            DefinedKind::Variable => self.defined_vars.push(code_item),
+            DefinedKind::Variable | DefinedKind::ClassBodyName => self.defined_vars.push(code_item),
         }
     }
 
@@ -751,7 +960,12 @@ impl<'a> DeadCodeVisitor<'a> {
         let ignored = ignore::ignore_variable(name);
         let removal_range = self.assignment_removal_range.take();
         let recorded_before = self.defined_vars.len();
-        self.push_definition(DefinedKind::Variable, name, start, end, &[], ignored, None);
+        let kind = if self.is_directly_in_class_body() {
+            DefinedKind::ClassBodyName
+        } else {
+            DefinedKind::Variable
+        };
+        self.push_definition(kind, name, start, end, &[], ignored, None);
         if let Some(range) = removal_range.filter(|_| self.defined_vars.len() > recorded_before) {
             self.widen_last_variable_to(range);
         }
@@ -1195,7 +1409,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 }
                 self.walk_parameters(&f.parameters);
                 if let Some(returns) = &f.returns {
-                    self.walk_expr(returns);
+                    self.walk_annotation(returns);
                 }
                 self.walk_stmt_list(&f.body);
                 if should_turn_off {
@@ -1223,6 +1437,28 @@ impl<'a> DeadCodeVisitor<'a> {
                         }
                     }
                 }
+                // Django instantiates each class named in a module-level
+                // `MIDDLEWARE` list of dotted paths, so the final component
+                // is used.
+                if let ([Expr::Name(target)], Expr::List(_) | Expr::Tuple(_), true) = (
+                    a.targets.as_slice(),
+                    a.value.as_ref(),
+                    self.scope_parts.len() == 1,
+                ) {
+                    if target.id.as_str() == "MIDDLEWARE" {
+                        let elts: &[Expr] = match a.value.as_ref() {
+                            Expr::List(l) => &l.elts,
+                            Expr::Tuple(t) => &t.elts,
+                            _ => &[],
+                        };
+                        for path in elts.iter().filter_map(as_str_constant) {
+                            let class_name = path.rsplit('.').next().unwrap_or(path);
+                            if !class_name.is_empty() {
+                                self.add_used_name(class_name);
+                            }
+                        }
+                    }
+                }
                 for target in &a.targets {
                     self.walk_assignment_target(target, a.range, a.targets.len() == 1, false);
                 }
@@ -1230,7 +1466,7 @@ impl<'a> DeadCodeVisitor<'a> {
             }
             Stmt::AnnAssign(a) => {
                 self.walk_assignment_target(&a.target, a.range, true, true);
-                self.walk_expr(&a.annotation);
+                self.walk_annotation(&a.annotation);
                 if let Some(v) = &a.value {
                     self.walk_expr(v);
                 }
@@ -1258,17 +1494,28 @@ impl<'a> DeadCodeVisitor<'a> {
             }
             Stmt::While(s) => {
                 match Self::conditional_outcome(&s.test) {
-                    Some(false) => self.add_unreachable_body(
-                        "while",
-                        s.range,
-                        "Unsatisfiable `while` condition",
-                    ),
+                    Some(false) => {
+                        if let (Some(first), Some(last)) = (s.body.first(), s.body.last()) {
+                            // As for `if`: an `else:` still runs, so keep it.
+                            let removal = if s.orelse.is_empty() {
+                                s.range
+                            } else {
+                                TextRange::new(first.start(), last.end())
+                            };
+                            self.add_unreachable_body(
+                                "while",
+                                s.start(),
+                                last.start(),
+                                Some(removal),
+                                "Unsatisfiable `while` condition",
+                                None,
+                            );
+                        }
+                    }
                     Some(true) if !s.orelse.is_empty() => {
-                        self.add_unreachable_body(
-                            "else",
-                            s.orelse[0].range(),
-                            "Unreachable `else` block",
-                        );
+                        let after_body = s.body.last().map_or(s.start(), Ranged::end);
+                        let else_keyword = self.else_keyword_before(after_body, &s.orelse);
+                        self.add_unreachable_else(else_keyword, &s.orelse);
                     }
                     _ => {}
                 }
@@ -1277,20 +1524,17 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.walk_stmt_list(&s.orelse);
             }
             Stmt::If(s) => {
-                match Self::conditional_outcome(&s.test) {
-                    Some(false) => {
-                        self.add_unreachable_body("if", s.range, "Unsatisfiable `if` condition")
+                self.check_if_condition(s.start(), &s.test, &s.body, &s.elif_else_clauses, s.end());
+                for (index, clause) in s.elif_else_clauses.iter().enumerate() {
+                    if let Some(test) = &clause.test {
+                        self.check_if_condition(
+                            clause.start(),
+                            test,
+                            &clause.body,
+                            &s.elif_else_clauses[index + 1..],
+                            s.end(),
+                        );
                     }
-                    Some(true) => {
-                        if let Some(first_clause) = s.elif_else_clauses.first() {
-                            self.add_unreachable_body(
-                                "else",
-                                first_clause.body[0].range(),
-                                "Unreachable `else` block",
-                            );
-                        }
-                    }
-                    _ => {}
                 }
                 self.walk_expr(&s.test);
                 self.walk_stmt_list(&s.body);
@@ -1379,7 +1623,7 @@ impl<'a> DeadCodeVisitor<'a> {
             .chain(parameters.kwonlyargs.iter())
         {
             if let Some(annotation) = &a.parameter.annotation {
-                self.walk_expr(annotation);
+                self.walk_annotation(annotation);
             }
             if let Some(default) = &a.default {
                 self.walk_expr(default);
@@ -1387,13 +1631,22 @@ impl<'a> DeadCodeVisitor<'a> {
         }
         if let Some(vararg) = &parameters.vararg {
             if let Some(annotation) = &vararg.annotation {
-                self.walk_expr(annotation);
+                self.walk_annotation(annotation);
             }
         }
         if let Some(kwarg) = &parameters.kwarg {
             if let Some(annotation) = &kwarg.annotation {
-                self.walk_expr(annotation);
+                self.walk_annotation(annotation);
             }
+        }
+    }
+
+    /// Walks a type annotation, also counting names inside quoted (forward
+    /// reference) annotations such as `"OrderedDict[str, int]"` as used.
+    fn walk_annotation(&mut self, annotation: &Expr) {
+        self.walk_expr(annotation);
+        for name in annotation_string_names(annotation, 10) {
+            self.add_used_name(&name);
         }
     }
 
@@ -1440,6 +1693,28 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.walk_expr(&l.body);
             }
             Expr::If(e) => {
+                // Reported, never removed: cutting an operand out of an
+                // expression cannot leave valid code (upstream's removal
+                // leaves `x = ` or `a if True else`).
+                match Self::conditional_outcome(&e.test) {
+                    Some(false) => self.add_unreachable_body(
+                        "ternary",
+                        e.start(),
+                        e.body.start(),
+                        None,
+                        "Unsatisfiable `ternary` condition",
+                        None,
+                    ),
+                    Some(true) => self.add_unreachable_body(
+                        "ternary",
+                        e.orelse.start(),
+                        e.orelse.start(),
+                        None,
+                        "Unreachable `else` expression",
+                        None,
+                    ),
+                    None => {}
+                }
                 self.walk_expr(&e.test);
                 self.walk_expr(&e.body);
                 self.walk_expr(&e.orelse);

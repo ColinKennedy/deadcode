@@ -7,30 +7,21 @@
 # "intentional" entries are upstream bugs Rust deliberately does not copy.
 cascade dry  # phase 3: cascading dead code (upstream #127)
 cascade report  # phase 3: cascading dead code (upstream #127)
-dc09 dry  # phase 2: DC09 ignores numeric/string conditions, reports the `if` line
-dc09 report  # phase 2: DC09 ignores numeric/string conditions, reports the `if` line
-dc09b dry  # phase 2: DC09 elif/else chain removal
-dc09b report  # phase 2: DC09 elif/else chain removal
-django dry  # phase 2: class-body names are DC01 here, DC06 upstream
-django report  # phase 2: class-body names are DC01 here, DC06 upstream
-django_mw dry  # phase 2: Django MIDDLEWARE registrations
-django_mw report  # phase 2: Django MIDDLEWARE registrations
+dc09b dry  # intentional: upstream deletes the reachable `else:` under `if False:`
+django_mw dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
 fastapi dry  # intentional: upstream misses usages in default arguments (Depends(get_db))
 fastapi report  # intentional: upstream misses usages in default arguments (Depends(get_db))
-legacy-django dry  # phases 2-3: DC06 naming, MIDDLEWARE, cascading
-legacy-django report  # phases 2-3: DC06 naming, MIDDLEWARE, cascading
-legacy-fastapi dry  # phases 2-3: DC06 naming, cascading
-legacy-fastapi report  # phases 2-3: DC06 naming, cascading
-legacy-fastapi_dependency_injection dry  # phases 2-3: DC06 naming, cascading
-legacy-fastapi_dependency_injection report  # phases 2-3: DC06 naming, cascading
-legacy-fastapi_features dry  # phases 2-3: DC06 naming, cascading
-legacy-fastapi_features report  # phases 2-3: DC06 naming, cascading
+legacy-django dry  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
+legacy-django report  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
+legacy-fastapi dry  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
+legacy-fastapi report  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
+legacy-fastapi_dependency_injection dry  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
+legacy-fastapi_dependency_injection report  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
+legacy-fastapi_features dry  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
+legacy-fastapi_features report  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
 legacy-functions dry  # phase 4: unified-diff hunk grouping differs (similar vs difflib)
 legacy-subdir dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
-quoted dry  # phase 2: names inside string annotations
-quoted report  # phase 2: names inside string annotations
 samename dry  # phase 3: same-named definitions in different files (upstream #122)
 samename report  # phase 3: same-named definitions in different files (upstream #122)
 unicode dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
-fix_edge_cases dry  # phase 2 DC06 naming; intentional: upstream leaves `: int` / `+= 1` stubs behind
-fix_edge_cases report  # phase 2: class-body names are DC01 here, DC06 upstream
+fix_edge_cases dry  # intentional: upstream leaves `: int` / `+= 1` stubs behind
