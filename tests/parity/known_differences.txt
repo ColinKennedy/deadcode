@@ -1,0 +1,44 @@
+# Known differences between the Rust CLI and legacy-python (upstream deadcode).
+#
+# Checked by scripts/parity.py: one `<case> <check>` per line, with a reason.
+# A difference missing from this list fails the run, and so does a listed one
+# that no longer occurs -- delete its line when you fix it.
+#
+# "intentional" entries are upstream bugs Rust deliberately does not copy.
+cascade dry  # phase 3: cascading dead code (upstream #127)
+cascade report  # phase 3: cascading dead code (upstream #127)
+dc09 dry  # phase 2: DC09 ignores numeric/string conditions, reports the `if` line
+dc09 report  # phase 2: DC09 ignores numeric/string conditions, reports the `if` line
+dc09b dry  # phase 2: DC09 elif/else chain removal
+dc09b report  # phase 2: DC09 elif/else chain removal
+django dry  # phase 2: class-body names are DC01 here, DC06 upstream
+django report  # phase 2: class-body names are DC01 here, DC06 upstream
+django_mw dry  # phase 2: Django MIDDLEWARE registrations
+django_mw report  # phase 2: Django MIDDLEWARE registrations
+fastapi dry  # intentional: upstream misses usages in default arguments (Depends(get_db))
+fastapi report  # intentional: upstream misses usages in default arguments (Depends(get_db))
+fix_edge_cases dry  # phase 2 DC06 naming; intentional: upstream leaves `: int` / `+= 1` stubs behind
+fix_edge_cases fix-parses  # phase 1: --fix leaves `: int` / `+= 1` / unindented `pass` behind
+fix_edge_cases report  # phase 2: class-body names are DC01 here, DC06 upstream
+imports_fix dry  # phase 1: --fix import removal (parenthesized, `;`, backslash, comments)
+imports_fix fix-parses  # phase 1: --fix import removal (parenthesized, `;`, backslash, comments)
+legacy-django dry  # phases 2-3: DC06 naming, MIDDLEWARE, cascading
+legacy-django fix-parses  # phase 1: --fix leaves an unindented `pass` in an emptied class
+legacy-django report  # phases 2-3: DC06 naming, MIDDLEWARE, cascading
+legacy-fastapi dry  # phases 2-3: DC06 naming, cascading
+legacy-fastapi fix-parses  # phase 1: --fix leaves `: str` behind for annotation-only names
+legacy-fastapi report  # phases 2-3: DC06 naming, cascading
+legacy-fastapi_dependency_injection dry  # phases 2-3: DC06 naming, cascading
+legacy-fastapi_dependency_injection fix-parses  # phase 1: --fix leaves `: str` behind for annotation-only names
+legacy-fastapi_dependency_injection report  # phases 2-3: DC06 naming, cascading
+legacy-fastapi_features dry  # phases 2-3: DC06 naming, cascading
+legacy-fastapi_features fix-parses  # phase 1: --fix leaves `: str` behind for annotation-only names
+legacy-fastapi_features report  # phases 2-3: DC06 naming, cascading
+legacy-functions dry  # phase 4: unified-diff hunk grouping differs (similar vs difflib)
+multiline_assign dry  # phase 1: multi-line assignments removed whole (upstream issue #26)
+multiline_assign fix-parses  # phase 1: multi-line assignments removed whole (upstream issue #26)
+quoted dry  # phase 2: names inside string annotations
+quoted fix-parses  # phase 1: --fix import removal leaves an empty `if TYPE_CHECKING:` import
+quoted report  # phase 2: names inside string annotations
+samename dry  # phase 3: same-named definitions in different files (upstream #122)
+samename report  # phase 3: same-named definitions in different files (upstream #122)

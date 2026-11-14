@@ -6,6 +6,7 @@
     python scripts/check.py python              # ruff, ruff-format, mypy, privata
     python scripts/check.py pytest              # legacy suite on every Python
     python scripts/check.py pytest --python 3.12   # ...or just one
+    python scripts/check.py parity              # Rust CLI vs legacy-python
     python scripts/check.py --list
 
 The GitHub workflow invokes these exact commands, so CI and local runs cannot
@@ -106,6 +107,12 @@ def _pytest(version: str) -> list[str]:
     ]
 
 
+def _parity() -> list[str]:
+    # Project mode, so legacy-python's `deadcode` is installed and importable:
+    # scripts/parity.py runs it in its own interpreter.
+    return ["uv", "run", "--quiet", "-p", LINT_PY, "python", str(ROOT / "scripts" / "parity.py")]
+
+
 CHECKS = [
     Check("fmt", "rust", "cargo fmt --check", ["cargo", "fmt", "--check"], ROOT),
     Check("clippy", "rust", "cargo clippy (warnings denied)",
@@ -118,6 +125,8 @@ CHECKS = [
     Check("mypy", "python", "mypy (legacy-python)", _mypy, LEGACY),
     Check("pytest", "python", "legacy test suite, per Python version",
           _pytest, LEGACY, per_python=True),
+    Check("parity", "parity", "Rust CLI vs legacy-python on tests/parity cases",
+          _parity, LEGACY),
 ]
 
 BY_NAME = {c.name: c for c in CHECKS}
