@@ -10,8 +10,7 @@ cascade report  # phase 3: cascading dead code (upstream #127)
 dc09b dry  # intentional: upstream deletes the reachable `else:` under `if False:`
 django dry  # phase 2: class-body names are DC01 here, DC06 upstream
 django report  # phase 2: class-body names are DC01 here, DC06 upstream
-django_mw dry  # phase 2: Django MIDDLEWARE registrations
-django_mw report  # phase 2: Django MIDDLEWARE registrations
+django_mw dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
 fastapi dry  # intentional: upstream misses usages in default arguments (Depends(get_db))
 fastapi report  # intentional: upstream misses usages in default arguments (Depends(get_db))
 legacy-django dry  # phases 2-3: DC06 naming, MIDDLEWARE, cascading

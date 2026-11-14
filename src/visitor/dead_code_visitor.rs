@@ -1428,6 +1428,28 @@ impl<'a> DeadCodeVisitor<'a> {
                         }
                     }
                 }
+                // Django instantiates each class named in a module-level
+                // `MIDDLEWARE` list of dotted paths, so the final component
+                // is used.
+                if let ([Expr::Name(target)], Expr::List(_) | Expr::Tuple(_), true) = (
+                    a.targets.as_slice(),
+                    a.value.as_ref(),
+                    self.scope_parts.len() == 1,
+                ) {
+                    if target.id.as_str() == "MIDDLEWARE" {
+                        let elts: &[Expr] = match a.value.as_ref() {
+                            Expr::List(l) => &l.elts,
+                            Expr::Tuple(t) => &t.elts,
+                            _ => &[],
+                        };
+                        for path in elts.iter().filter_map(as_str_constant) {
+                            let class_name = path.rsplit('.').next().unwrap_or(path);
+                            if !class_name.is_empty() {
+                                self.add_used_name(class_name);
+                            }
+                        }
+                    }
+                }
                 for target in &a.targets {
                     self.walk_assignment_target(target, a.range, a.targets.len() == 1, false);
                 }

@@ -257,3 +257,35 @@ mod quoted_annotations {
         assert_eq!(p.run(&["foo.py", "--no-color"]), None);
     }
 }
+
+mod django_middleware {
+    use super::*;
+
+    #[test]
+    fn classes_registered_in_module_level_middleware_are_used() {
+        let p = Project::new();
+        p.write(
+            "settings.py",
+            "MIDDLEWARE = [\n    'proj.middleware.TimingMiddleware',\n    'proj.middleware.simple_middleware',\n]\n",
+        );
+        p.write(
+            "middleware.py",
+            "class TimingMiddleware:\n    pass\n\n\ndef simple_middleware(get_response):\n    return get_response\n\n\nclass UnusedMiddleware:\n    pass\n",
+        );
+        let result = p.run(&[".", "--no-color"]).unwrap();
+        assert!(!result.contains("TimingMiddleware"), "{result}");
+        assert!(!result.contains("simple_middleware"), "{result}");
+        assert!(result.contains("DC03 Class `UnusedMiddleware` is never used"));
+    }
+
+    #[test]
+    fn a_nested_middleware_variable_is_not_a_registration() {
+        let p = Project::new();
+        p.write(
+            "foo.py",
+            "def configure():\n    MIDDLEWARE = ['proj.Timing']\n    return MIDDLEWARE\n\n\nclass Timing:\n    pass\n\n\nconfigure()\n",
+        );
+        let result = p.run(&["foo.py", "--no-color"]).unwrap();
+        assert!(result.contains("DC03 Class `Timing` is never used"));
+    }
+}
