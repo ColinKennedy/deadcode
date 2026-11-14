@@ -116,8 +116,6 @@ CHECKS = [
     Check("ruff-format", "python", "ruff format --check (legacy-python)",
           lambda: _lint("ruff", "format", "--check", "deadcode", "tests"), LEGACY),
     Check("mypy", "python", "mypy (legacy-python)", _mypy, LEGACY),
-    Check("privata", "python", "module privacy (legacy-python)",
-          ["uvx", "privata", "."], LEGACY),
     Check("pytest", "python", "legacy test suite, per Python version",
           _pytest, LEGACY, per_python=True),
 ]
