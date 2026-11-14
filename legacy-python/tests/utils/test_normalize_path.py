@@ -1,4 +1,4 @@
-from pathlib import Path, PosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from deadcode.utils.normalize_path import normalize_path
 
@@ -16,7 +16,7 @@ def test_raw_windows_string_path_is_converted_to_forward_slashes():
 
 
 def test_backslash_in_posix_filename_is_preserved():
-    assert normalize_path(PosixPath('pkg\\mod.py')) == 'pkg\\mod.py'
+    assert normalize_path(PurePosixPath('pkg\\mod.py')) == 'pkg\\mod.py'
 
 
 def test_duplicate_separators_are_preserved():
