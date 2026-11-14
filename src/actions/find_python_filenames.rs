@@ -51,6 +51,21 @@ struct PendingPath {
     file_type: Option<FileType>,
 }
 
+/// Drops `.` components the way `pathlib` does, so `.` lists `m.py` (not
+/// `./m.py`) and `./src` is `src`: findings print, and path patterns match,
+/// exactly as upstream's.
+fn without_current_dir_components(path: &Path) -> PathBuf {
+    let normalized: PathBuf = path
+        .components()
+        .filter(|component| !matches!(component, std::path::Component::CurDir))
+        .collect();
+    if normalized.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        normalized
+    }
+}
+
 fn resolve_file_type(entry: &DirEntry) -> Option<FileType> {
     match entry.file_type() {
         Ok(ft) if ft.is_symlink() => entry.path().metadata().ok().map(|m| m.file_type()),
@@ -72,7 +87,7 @@ fn find_python_filenames_from_paths(
     let mut paths: Vec<PendingPath> = paths_to_scan
         .into_iter()
         .map(|path| PendingPath {
-            path,
+            path: without_current_dir_components(&path),
             file_type: None,
         })
         .collect();
@@ -122,7 +137,7 @@ fn find_python_filenames_from_paths(
                 for entry in entries.flatten() {
                     let file_type = resolve_file_type(&entry);
                     paths.push(PendingPath {
-                        path: entry.path(),
+                        path: without_current_dir_components(&entry.path()),
                         file_type,
                     });
                 }

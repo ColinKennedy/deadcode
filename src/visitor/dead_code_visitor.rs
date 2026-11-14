@@ -982,7 +982,9 @@ impl<'a> DeadCodeVisitor<'a> {
                 true,
             )
             || self.should_ignore_new_definitions
+            // Upstream honours `noqa` on the first decorator's line too.
             || noqa::ignore_line(&self.noqa_lines, name_line as u32, error_code)
+            || noqa::ignore_line(&self.noqa_lines, first_line, error_code)
             || self
                 .tach_index
                 .is_exposed(&self.filename, enclosing_class.as_deref(), name);
