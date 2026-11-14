@@ -37,11 +37,15 @@ pub struct Args {
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub exclude: Vec<String>,
 
+    /// Ignores findings with any of the provided rule codes, e.g. DC12.
+    #[arg(long = "ignore-rules", num_args = 0.., action = clap::ArgAction::Append)]
+    pub ignore_rules: Vec<String>,
+
     /// Ignores definition (including name and body) if a name of an expression matches any of the provided ones.
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_definitions: Vec<String>,
 
-    /// (No-op today, same as upstream — see FOLLOWUP.local.md.)
+    /// Ignores a decorated definition, including its name and body.
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_definitions_if_decorated_with: Vec<String>,
 
@@ -53,7 +57,7 @@ pub struct Args {
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_bodies_of: Vec<String>,
 
-    /// (No-op today, same as upstream.)
+    /// Ignores a decorated definition's body.
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_bodies_if_decorated_with: Vec<String>,
 
@@ -61,11 +65,11 @@ pub struct Args {
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_bodies_if_inherits_from: Vec<String>,
 
-    /// (No-op today, same as upstream.)
+    /// Ignores a decorated definition's name while still analysing its body.
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_if_decorated_with: Vec<String>,
 
-    /// (No-op today, same as upstream.)
+    /// Ignores class names that inherit from matching base classes.
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_if_inherits_from: Vec<String>,
 
@@ -114,7 +118,7 @@ pub struct Args {
     pub verbose: bool,
 
     /// Shows deadcode version (handled upstream of clap parsing — see module doc comment).
-    #[arg(long)]
+    #[arg(short = 'V', long)]
     pub version: bool,
 }
 

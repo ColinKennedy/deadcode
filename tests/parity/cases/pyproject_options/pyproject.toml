@@ -1,0 +1,4 @@
+[tool.deadcode]
+ignore-rules = ["DC07"]
+dry = true
+no-color = true

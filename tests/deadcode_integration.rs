@@ -40,7 +40,7 @@ fn unused_function_names_found_in_real_fixture_file() {
     let file = fixture("tests/files/functions.py");
     let result = run(&[&file, "--no-color"]).unwrap();
     let expected = format!(
-        "{f}:1:0: DC02 Function `unused_function` is never used\n{f}:13:0: DC02 Function `another_unused_function` is never used\n{f}:14:4: DC02 Function `this_is_unused_closure` is never used",
+        "{f}:1:0: DC02 Function `unused_function` is never used\n{f}:13:0: DC02 Function `another_unused_function` is never used\n{f}:14:4: DC02 Function `this_is_unused_closure` is never used\n{f}:21:0: DC12 Commented out code",
         f = file
     );
     assert_eq!(result, expected);

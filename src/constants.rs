@@ -9,6 +9,7 @@ pub enum UnusedCodeType {
     Method,
     Property,
     Variable,
+    UnreachableBody,
     UnreachableCode,
     Name,
     UnusedFile,
@@ -28,6 +29,7 @@ impl UnusedCodeType {
             UnusedCodeType::Method => "Method",
             UnusedCodeType::Property => "Property",
             UnusedCodeType::Variable => "Variable",
+            UnusedCodeType::UnreachableBody => "Unreachable body",
             UnusedCodeType::UnreachableCode => "Unreachable code",
             UnusedCodeType::Name => "Name",
             UnusedCodeType::UnusedFile => "Unused file",
@@ -46,11 +48,12 @@ impl UnusedCodeType {
             UnusedCodeType::Name => "DC06",
             UnusedCodeType::Import => "DC07",
             UnusedCodeType::Property => "DC08",
-            UnusedCodeType::UnreachableCode => "DC09",
+            UnusedCodeType::UnreachableBody => "DC09",
             // Note: DC10 is deliberately absent (matches upstream numbering gap).
             UnusedCodeType::UnusedFile => "DC11",
             UnusedCodeType::CommentedOutCode => "DC12",
-            UnusedCodeType::IgnoreExpression => "DC13",
+            UnusedCodeType::UnreachableCode => "DC13",
+            UnusedCodeType::IgnoreExpression => "DC",
         }
     }
 }

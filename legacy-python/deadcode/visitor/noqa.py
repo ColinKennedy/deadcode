@@ -1,8 +1,7 @@
 from collections import defaultdict
 import re
-from typing import Dict, List, Set
 
-_NOQA_REGEXP = re.compile(
+NOQA_REGEXP = re.compile(
     # Use the same regex as flake8 does.
     # https://github.com/pycqa/flake8/blob/main/src/flake8/defaults.py
     # We're looking for items that look like this:
@@ -14,7 +13,7 @@ _NOQA_REGEXP = re.compile(
     re.IGNORECASE,
 )
 
-_NOQA_CODE_MAP = {
+NOQA_CODE_MAP = {
     # flake8 F401: module imported but unused.
     b'F401': b'DC07',
     # flake8 F841: local variable is assigned to but never used.
@@ -47,22 +46,22 @@ _NOQA_CODE_MAP = {
 }
 
 
-def _parse_error_codes(matches_dict: Dict[str, bytes]) -> List[bytes]:
+def _parse_error_codes(matches_dict: dict[str, bytes]) -> list[bytes]:
     # If no error code is specified, add the line to the "all" category.
     return [c.strip() for c in (matches_dict['codes'] or b'all').split(b',')]
 
 
-def parse_noqa(code: bytes) -> Dict[bytes, Set[int]]:
+def parse_noqa(code: bytes) -> dict[bytes, set[int]]:
     noqa_lines = defaultdict(set)
     for lineno, line in enumerate(code.split(b'\n'), start=1):
-        match = _NOQA_REGEXP.search(line)
+        match = NOQA_REGEXP.search(line)
         if match:
             for error_code in _parse_error_codes(match.groupdict()):
-                error_code = _NOQA_CODE_MAP.get(error_code, error_code)
+                error_code = NOQA_CODE_MAP.get(error_code, error_code)
                 noqa_lines[error_code].add(lineno)
     return noqa_lines
 
 
-def ignore_line(noqa_lines: Dict[bytes, Set[int]], lineno: int, error_code: bytes) -> bool:
+def ignore_line(noqa_lines: dict[bytes, set[int]], lineno: int, error_code: bytes) -> bool:
     """Check if the reported line is annotated with "# noqa"."""
     return lineno in noqa_lines[error_code] or lineno in noqa_lines[b'all']

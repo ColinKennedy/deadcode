@@ -1,14 +1,7 @@
 //! Port of the still-relevant part of `deadcode/visitor/utils.py`.
 //!
-//! `condition_is_always_false`/`condition_is_always_true` (and the
-//! `_safe_eval` double-evaluation this session's own profiling work found
-//! wasteful) are NOT ported: tracing the actual consumer confirmed
-//! `unreachable_code` findings are computed but explicitly excluded from
-//! `get_unused_code_items()` (`# TODO: removal of unreachable_code has a lot
-//! of edge cases`) and no test suppresses/asserts on them being reported —
-//! the whole feature has zero effect on any observable output. Skipping it
-//! removes an entire category of AST recursion (double-visiting every
-//! `if`/`while`/ternary condition) for free.
+//! Condition analysis lives in `DeadCodeVisitor`, alongside the statement
+//! ranges needed to report and safely remove DC09 unreachable bodies.
 
 use ruff_python_ast::Expr;
 

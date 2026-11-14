@@ -5,28 +5,18 @@
 //! - No generic `ast.iter_fields`-style reflection: an exhaustive `match`
 //!   over `ruff_python_ast`'s `Stmt`/`Expr` enums, monomorphized, no dynamic
 //!   dispatch.
-//! - `unreachable_code` (DC09) tracking is NOT implemented: tracing
-//!   `get_unused_code_items()` in the Python source shows that collection is
-//!   computed but explicitly excluded from the output
-//!   (`# TODO: removal of unreachable_code has a lot of edge cases`), and no
-//!   test suppresses or asserts on it being reported. It has zero effect on
-//!   any observable behavior, so porting it would just be dead weight.
-//! - `ignore_decorators` (the `--ignore-*-if-decorated-with` flags) is a
-//!   confirmed no-op in the Python original (hardcoded to an empty list in
-//!   `__init__`, see `FOLLOWUP.local.md`) — preserved as a no-op here too,
-//!   not "fixed", for exact parity.
 //! - `NestedScope` only tracks classes (see `utils/nested_scopes.rs` for why
 //!   that's provably behavior-preserving), so there's no `mark_as_used`/
 //!   `number_of_uses` machinery here at all.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use ruff_python_ast::{
-    Alias, Decorator, Expr, ExprContext, Identifier, InterpolatedStringElement, Keyword, Operator,
-    Parameters, Pattern, Stmt,
+    Alias, BoolOp, Decorator, Expr, ExprContext, Identifier, InterpolatedStringElement, Keyword,
+    Operator, Parameters, Pattern, Stmt,
 };
-use ruff_text_size::{Ranged, TextSize};
+use ruff_text_size::{Ranged, TextRange, TextSize};
 
 use crate::actions::parse_abstract_syntax_tree::parse_abstract_syntax_tree;
 use crate::actions::parse_tach_config::TachIndex;
@@ -83,6 +73,9 @@ pub struct DeadCodeVisitor<'a> {
     defined_props: Vec<CodeItem>,
     defined_vars: Vec<CodeItem>,
     pub unused_file: Vec<CodeItem>,
+    commented_out_code: Vec<CodeItem>,
+    unreachable_body: Vec<CodeItem>,
+    unreachable_code: Vec<CodeItem>,
 
     /// Files that could not be parsed and were therefore skipped entirely.
     ///
@@ -106,6 +99,14 @@ pub struct DeadCodeVisitor<'a> {
     /// `def`/`class` keyword offset of a decorated definition — see
     /// `definition_keyword_start`.
     source: String,
+    /// Absolute import targets keyed by the local spelling used in this file.
+    qualified_imports: HashMap<String, String>,
+    /// The whole statement to delete when the plain-name target currently
+    /// being walked turns out unused. Set only for a single-target assignment
+    /// spanning several lines, where cutting out just the name would leave the
+    /// value's continuation lines behind as invalid Python (upstream issue
+    /// #26).
+    assignment_removal_range: Option<TextRange>,
 }
 
 /// Extracts a `str` constant value, mirroring the several
@@ -181,6 +182,47 @@ fn is_identifier_like(name: &str) -> bool {
     matches!(name.chars().next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
 }
 
+fn is_commented_out_code(code: &str) -> bool {
+    let lower = code.trim_start().to_ascii_lowercase();
+    if [
+        "type:", "ty:", "pyright:", "pyre-", "pyre:", "mypy:", "pytype:",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+    {
+        return false;
+    }
+
+    let statement_prefixes = [
+        "import ", "from ", "def ", "class ", "return", "raise", "break", "continue", "pass",
+        "if ", "for ", "while ", "with ", "try:", "except", "elif ", "else:",
+    ];
+    if !code.contains(['(', '=', '[', '{'])
+        && !statement_prefixes
+            .iter()
+            .any(|prefix| code.starts_with(prefix))
+    {
+        return false;
+    }
+
+    let Ok(statements) = parse_abstract_syntax_tree(code) else {
+        return false;
+    };
+    statements.iter().any(|statement| match statement {
+        Stmt::Expr(expression) => !matches!(
+            expression.value.as_ref(),
+            Expr::StringLiteral(_)
+                | Expr::BytesLiteral(_)
+                | Expr::NumberLiteral(_)
+                | Expr::BooleanLiteral(_)
+                | Expr::NoneLiteral(_)
+                | Expr::EllipsisLiteral(_)
+                | Expr::Name(_)
+        ),
+        _ => true,
+    })
+}
+
 impl<'a> DeadCodeVisitor<'a> {
     pub fn new(args: &'a Args, tach_index: &'a TachIndex) -> Self {
         DeadCodeVisitor {
@@ -194,6 +236,9 @@ impl<'a> DeadCodeVisitor<'a> {
             defined_props: Vec::new(),
             defined_vars: Vec::new(),
             unused_file: Vec::new(),
+            commented_out_code: Vec::new(),
+            unreachable_body: Vec::new(),
+            unreachable_code: Vec::new(),
             parse_failures: Vec::new(),
             used_names: HashSet::new(),
             filename: PathBuf::new(),
@@ -204,6 +249,8 @@ impl<'a> DeadCodeVisitor<'a> {
             scopes: NestedScope::new(),
             line_index: LineIndex::new(""),
             source: String::new(),
+            qualified_imports: HashMap::new(),
+            assignment_removal_range: None,
         }
     }
 
@@ -233,6 +280,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 .unwrap_or(&filename);
             self.scope_parts = vec![module_name.to_string()];
             self.scope_kinds = Vec::new();
+            self.qualified_imports.clear();
 
             let is_dunder_file = filename.starts_with("__") && filename.ends_with("__.py");
             let content_str = String::from_utf8_lossy(&file_content).into_owned();
@@ -243,13 +291,12 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.filename = PathBuf::from(file_path);
                 self.line_index = LineIndex::new(&content_str);
                 self.source = content_str;
+                self.collect_commented_out_code();
 
                 let parsed = parse_abstract_syntax_tree(&self.source);
                 match parsed {
                     Ok(module) => {
-                        for stmt in &module {
-                            self.walk_stmt(stmt);
-                        }
+                        self.walk_stmt_list(&module);
                     }
                     Err(_) => {
                         // Deliberately NOT gated on `--count`/`--quiet`, unlike
@@ -289,7 +336,9 @@ impl<'a> DeadCodeVisitor<'a> {
         unused.extend(unused_of(&self.defined_methods, &self.used_names));
         unused.extend(unused_of(&self.defined_props, &self.used_names));
         unused.extend(unused_of(&self.defined_vars, &self.used_names));
-        // NOT self.unreachable_code -- see module doc comment.
+        unused.extend(self.commented_out_code.iter().cloned());
+        unused.extend(self.unreachable_body.iter().cloned());
+        unused.extend(self.unreachable_code.iter().cloned());
         unused.extend(self.unused_file.iter().cloned());
 
         unused.sort_by(|a, b| {
@@ -306,6 +355,191 @@ impl<'a> DeadCodeVisitor<'a> {
         self.scope_kinds.last() == Some(&ScopeKind::Class)
     }
 
+    /// Record a DC09 finding. The caller chooses the precise source span to
+    /// remove: a false condition removes the full statement, while an always
+    /// true condition removes just its unreachable `else` suite.
+    fn add_unreachable_body(&mut self, name: &str, range: TextRange, message: &str) {
+        let (line, column) = self.line_index.line_col(range.start());
+        let (end_line, end_column) = self.line_index.line_col(range.end());
+        if self.should_ignore_new_definitions
+            || fnmatch::match_any(name, &self.args.ignore_names, true)
+            || fnmatch::match_any(
+                &path_as_posix(&self.filename),
+                &self.args.ignore_names_in_files,
+                true,
+            )
+            || noqa::ignore_line(&self.noqa_lines, line as u32, "DC09")
+        {
+            return;
+        }
+        self.unreachable_body.push(CodeItem::new(
+            name.to_string(),
+            UnusedCodeType::UnreachableBody,
+            self.filename.clone(),
+            vec![Part::new(
+                line as u32,
+                end_line as u32,
+                column as u32,
+                end_column as u32,
+            )],
+            (!self.scope_parts.is_empty()).then(|| self.scope_parts.join(".")),
+            None,
+            Some(line as u32),
+            Some(column as u32),
+            message.to_string(),
+        ));
+    }
+
+    /// Mirror upstream's safe, conservative condition evaluator. Unknown
+    /// expressions are substituted with both truth values, so only conditions
+    /// that are provably true or false produce a finding.
+    fn condition_truth_value(expression: &Expr, unknown_value: bool) -> bool {
+        match expression {
+            Expr::BooleanLiteral(value) => value.value,
+            Expr::NoneLiteral(_) => false,
+            Expr::BoolOp(value) => match value.op {
+                BoolOp::And => value
+                    .values
+                    .iter()
+                    .all(|part| Self::condition_truth_value(part, unknown_value)),
+                BoolOp::Or => value
+                    .values
+                    .iter()
+                    .any(|part| Self::condition_truth_value(part, unknown_value)),
+            },
+            Expr::UnaryOp(value) if value.op == ruff_python_ast::UnaryOp::Not => {
+                !Self::condition_truth_value(&value.operand, !unknown_value)
+            }
+            _ => unknown_value,
+        }
+    }
+
+    fn conditional_outcome(expression: &Expr) -> Option<bool> {
+        if !Self::condition_truth_value(expression, true) {
+            Some(false)
+        } else if Self::condition_truth_value(expression, false) {
+            Some(true)
+        } else {
+            None
+        }
+    }
+
+    fn collect_commented_out_code(&mut self) {
+        let options = ruff_python_parser::ParseOptions::from(ruff_python_parser::Mode::Module)
+            .with_target_version(ruff_python_ast::PythonVersion::latest());
+        let Ok(parsed) = ruff_python_parser::parse(&self.source, options) else {
+            return;
+        };
+        for token in parsed.tokens() {
+            if token.kind() != ruff_python_ast::token::TokenKind::Comment {
+                continue;
+            }
+            let range = token.range();
+            let comment = &self.source[range];
+            let mut code = &comment[1..];
+            if let Some(noqa_start) = code.match_indices('#').find_map(|(index, _)| {
+                code[index + 1..]
+                    .trim_start()
+                    .to_ascii_lowercase()
+                    .starts_with("noqa")
+                    .then_some(index)
+            }) {
+                code = &code[..noqa_start];
+            }
+            let code = code.trim();
+            if !is_commented_out_code(code) {
+                continue;
+            }
+
+            let (line, column) = self.line_index.line_col(range.start());
+            if noqa::ignore_line(&self.noqa_lines, line as u32, "DC12") {
+                continue;
+            }
+            let line_start = self.source[..range.start().to_usize()]
+                .rfind('\n')
+                .map_or(0, |index| index + 1);
+            let prefix = &self.source[line_start..range.start().to_usize()];
+            let removal_start = line_start + prefix.trim_end().len();
+            let (_, removal_column) = self
+                .line_index
+                .line_col(TextSize::new(removal_start as u32));
+            let (_, end_column) = self.line_index.line_col(range.end());
+            self.commented_out_code.push(CodeItem::new(
+                code.to_string(),
+                UnusedCodeType::CommentedOutCode,
+                self.filename.clone(),
+                vec![Part::new(
+                    line as u32,
+                    line as u32,
+                    removal_column as u32,
+                    end_column as u32,
+                )],
+                None,
+                None,
+                Some(line as u32),
+                Some(column as u32),
+                "Commented out code".to_string(),
+            ));
+        }
+    }
+
+    /// Walk a statement list while reporting the contiguous suffix that can
+    /// never execute after a terminal statement. This mirrors the upstream
+    /// visitor's list hook, so it applies to every nested statement body.
+    fn walk_stmt_list(&mut self, statements: &[Stmt]) {
+        for (index, statement) in statements.iter().enumerate() {
+            if matches!(
+                statement,
+                Stmt::Break(_) | Stmt::Continue(_) | Stmt::Raise(_) | Stmt::Return(_)
+            ) {
+                let Some(first_unreachable) = statements.get(index + 1) else {
+                    continue;
+                };
+                let terminal_name = match statement {
+                    Stmt::Break(_) => "break",
+                    Stmt::Continue(_) => "continue",
+                    Stmt::Raise(_) => "raise",
+                    Stmt::Return(_) => "return",
+                    _ => unreachable!(),
+                };
+                let first_range = first_unreachable.range();
+                let last_range = statements.last().expect("non-empty statement list").range();
+                let (line, column) = self.line_index.line_col(first_range.start());
+                let (last_line, end_column) = self.line_index.line_col(last_range.end());
+                let ignored = self.should_ignore_new_definitions
+                    || fnmatch::match_any(terminal_name, &self.args.ignore_names, true)
+                    || fnmatch::match_any(
+                        &path_as_posix(&self.filename),
+                        &self.args.ignore_names_in_files,
+                        true,
+                    )
+                    || noqa::ignore_line(&self.noqa_lines, line as u32, "DC13");
+                if !ignored {
+                    self.unreachable_code.push(CodeItem::new(
+                        terminal_name.to_string(),
+                        UnusedCodeType::UnreachableCode,
+                        self.filename.clone(),
+                        vec![Part::new(
+                            line as u32,
+                            last_line as u32,
+                            column as u32,
+                            end_column as u32,
+                        )],
+                        (!self.scope_parts.is_empty()).then(|| self.scope_parts.join(".")),
+                        None,
+                        Some(line as u32),
+                        Some(column as u32),
+                        format!("unreachable code after '{terminal_name}'"),
+                    ));
+                }
+                break;
+            }
+        }
+        for statement in statements {
+            self.walk_stmt(statement);
+        }
+    }
+
     /// Port of `get_inherits_from`, restricted (like the caller already
     /// restricts it) to `ClassDef` nodes: returns `None` if `bases` is
     /// empty (matching Python's falsy-list check on the *raw* bases list,
@@ -316,10 +550,7 @@ impl<'a> DeadCodeVisitor<'a> {
         }
         let base_names: Vec<String> = bases
             .iter()
-            .filter_map(|b| match b {
-                Expr::Name(n) => Some(n.id.as_str().to_string()),
-                _ => None,
-            })
+            .flat_map(|base| self.expression_name_candidates(base))
             .collect();
         let mut inherits_from = base_names.clone();
         for base in &base_names {
@@ -328,6 +559,48 @@ impl<'a> DeadCodeVisitor<'a> {
             }
         }
         Some(inherits_from)
+    }
+
+    fn expression_name_candidates(&self, expression: &Expr) -> Vec<String> {
+        fn dotted_name(expression: &Expr) -> Option<String> {
+            match expression {
+                Expr::Name(name) => Some(name.id.as_str().to_string()),
+                Expr::Attribute(attribute) => Some(format!(
+                    "{}.{}",
+                    dotted_name(&attribute.value)?,
+                    attribute.attr
+                )),
+                _ => None,
+            }
+        }
+        let Some(name) = dotted_name(expression) else {
+            return Vec::new();
+        };
+        let mut candidates = vec![name.clone()];
+        let (first, suffix) = name.split_once('.').unwrap_or((&name, ""));
+        if let Some(target) = self.qualified_imports.get(first) {
+            candidates.push(if suffix.is_empty() {
+                target.clone()
+            } else {
+                format!("{target}.{suffix}")
+            });
+        }
+        candidates
+    }
+
+    fn decorator_names(&self, decorators: &[Decorator]) -> Vec<String> {
+        decorators
+            .iter()
+            .flat_map(|decorator| {
+                let mut names = vec![get_decorator_name(&decorator.expression)];
+                names.extend(
+                    self.expression_name_candidates(&decorator.expression)
+                        .into_iter()
+                        .map(|name| format!("@{name}")),
+                );
+                names
+            })
+            .collect()
     }
 
     /// Returns the offset Python's `ast` would report as a definition's
@@ -403,6 +676,14 @@ impl<'a> DeadCodeVisitor<'a> {
 
         let ignored = type_specific_ignored
             || fnmatch::match_any(name, &self.args.ignore_names, true)
+            || fnmatch::match_many(
+                &self.decorator_names(decorator_list),
+                &self.args.ignore_names_if_decorated_with,
+                true,
+            )
+            || inherits_from.as_deref().is_some_and(|chain| {
+                fnmatch::match_many(chain, &self.args.ignore_names_if_inherits_from, true)
+            })
             || fnmatch::match_any(
                 &path_as_posix(&self.filename),
                 &self.args.ignore_names_in_files,
@@ -468,7 +749,51 @@ impl<'a> DeadCodeVisitor<'a> {
             return;
         }
         let ignored = ignore::ignore_variable(name);
+        let removal_range = self.assignment_removal_range.take();
+        let recorded_before = self.defined_vars.len();
         self.push_definition(DefinedKind::Variable, name, start, end, &[], ignored, None);
+        if let Some(range) = removal_range.filter(|_| self.defined_vars.len() > recorded_before) {
+            self.widen_last_variable_to(range);
+        }
+    }
+
+    /// Replaces the removal span of the variable just recorded with `range`,
+    /// keeping its reported position on the name.
+    fn widen_last_variable_to(&mut self, range: TextRange) {
+        let (line_start, col_start) = self.line_index.line_col(range.start());
+        let (line_end, col_end) = self.line_index.line_col(range.end());
+        if let Some(item) = self.defined_vars.last_mut() {
+            item.code_parts = vec![Part::new(
+                line_start as u32,
+                line_end as u32,
+                col_start as u32,
+                col_end as u32,
+            )];
+        }
+    }
+
+    /// Walks an assignment target, arranging for an unused plain-name target
+    /// to remove the whole statement when cutting out just the name would
+    /// leave invalid Python: any multi-line statement (upstream issue #26),
+    /// and every annotated or augmented one, whose `: int` / `+= 1` tail has
+    /// no leading `=` for the line remover to recognise.
+    fn walk_assignment_target(
+        &mut self,
+        target: &Expr,
+        statement: TextRange,
+        sole_target: bool,
+        always_whole: bool,
+    ) {
+        let (first_line, _) = self.line_index.line_col(statement.start());
+        let (last_line, _) = self.line_index.line_col(statement.end());
+        if sole_target
+            && matches!(target, Expr::Name(_))
+            && (always_whole || last_line > first_line)
+        {
+            self.assignment_removal_range = Some(statement);
+        }
+        self.walk_expr(target);
+        self.assignment_removal_range = None;
     }
 
     fn track_usefixtures_mark(&mut self, decorator: &Expr) {
@@ -485,11 +810,20 @@ impl<'a> DeadCodeVisitor<'a> {
         }
     }
 
-    fn add_aliases(&mut self, names: &[Alias]) {
+    fn add_aliases(&mut self, names: &[Alias], module: Option<&str>) {
         for alias in names {
             let full_name = alias.name.as_str();
             let name = full_name.split('.').next().unwrap_or(full_name);
             let effective_name = alias.asname.as_ref().map_or(name, |a| a.as_str());
+            if let Some(module) = module {
+                if !module.is_empty() {
+                    self.qualified_imports
+                        .insert(effective_name.to_string(), format!("{module}.{full_name}"));
+                }
+            } else {
+                self.qualified_imports
+                    .insert(effective_name.to_string(), full_name.to_string());
+            }
             let ignored = ignore::ignore_import(&self.filename, name);
             self.push_definition(
                 DefinedKind::Import,
@@ -621,10 +955,7 @@ impl<'a> DeadCodeVisitor<'a> {
         start: TextSize,
         end: TextSize,
     ) {
-        let decorator_names: Vec<String> = decorator_list
-            .iter()
-            .map(|d| get_decorator_name(&d.expression))
-            .collect();
+        let decorator_names = self.decorator_names(decorator_list);
         for decorator in decorator_list {
             self.track_usefixtures_mark(&decorator.expression);
         }
@@ -743,6 +1074,11 @@ impl<'a> DeadCodeVisitor<'a> {
                 let mut should_turn_off = false;
                 let matches_ignore_defs =
                     fnmatch::match_any(c.name.as_str(), &self.args.ignore_definitions, true)
+                        || fnmatch::match_many(
+                            &self.decorator_names(&c.decorator_list),
+                            &self.args.ignore_definitions_if_decorated_with,
+                            true,
+                        )
                         || inherits_from.as_deref().is_some_and(|chain| {
                             fnmatch::match_many(
                                 chain,
@@ -772,6 +1108,10 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.scope_kinds.push(ScopeKind::Class);
 
                 if !self.should_ignore_new_definitions {
+                    if fnmatch::match_any(c.name.as_str(), &self.args.ignore_bodies_of, true) {
+                        self.should_ignore_new_definitions = true;
+                        should_turn_off = true;
+                    }
                     if let Some(chain) = &inherits_from {
                         if fnmatch::match_many(
                             chain,
@@ -781,6 +1121,16 @@ impl<'a> DeadCodeVisitor<'a> {
                             self.should_ignore_new_definitions = true;
                             should_turn_off = true;
                         }
+                    }
+                    if !self.should_ignore_new_definitions
+                        && fnmatch::match_many(
+                            &self.decorator_names(&c.decorator_list),
+                            &self.args.ignore_bodies_if_decorated_with,
+                            true,
+                        )
+                    {
+                        self.should_ignore_new_definitions = true;
+                        should_turn_off = true;
                     }
                 }
 
@@ -793,9 +1143,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 for kw in c.keywords() {
                     self.walk_expr(&kw.value);
                 }
-                for s in &c.body {
-                    self.walk_stmt(s);
-                }
+                self.walk_stmt_list(&c.body);
 
                 if should_turn_off {
                     self.should_ignore_new_definitions = false;
@@ -809,6 +1157,19 @@ impl<'a> DeadCodeVisitor<'a> {
             // byte-identical, and nothing in this visitor branches on
             // asyncness, so collapsing them is behavior-preserving.
             Stmt::FunctionDef(f) => {
+                let decorator_names = self.decorator_names(&f.decorator_list);
+                let mut should_turn_off = false;
+                if (fnmatch::match_any(f.name.as_str(), &self.args.ignore_definitions, true)
+                    || fnmatch::match_many(
+                        &decorator_names,
+                        &self.args.ignore_definitions_if_decorated_with,
+                        true,
+                    ))
+                    && !self.should_ignore_new_definitions
+                {
+                    self.should_ignore_new_definitions = true;
+                    should_turn_off = true;
+                }
                 self.walk_function_like(
                     &f.name,
                     &f.parameters,
@@ -818,6 +1179,17 @@ impl<'a> DeadCodeVisitor<'a> {
                 );
                 self.scope_parts.push(f.name.as_str().to_string());
                 self.scope_kinds.push(ScopeKind::Function);
+                if !self.should_ignore_new_definitions
+                    && (fnmatch::match_any(f.name.as_str(), &self.args.ignore_bodies_of, true)
+                        || fnmatch::match_many(
+                            &decorator_names,
+                            &self.args.ignore_bodies_if_decorated_with,
+                            true,
+                        ))
+                {
+                    self.should_ignore_new_definitions = true;
+                    should_turn_off = true;
+                }
                 for decorator in &f.decorator_list {
                     self.walk_expr(&decorator.expression);
                 }
@@ -825,16 +1197,17 @@ impl<'a> DeadCodeVisitor<'a> {
                 if let Some(returns) = &f.returns {
                     self.walk_expr(returns);
                 }
-                for s in &f.body {
-                    self.walk_stmt(s);
+                self.walk_stmt_list(&f.body);
+                if should_turn_off {
+                    self.should_ignore_new_definitions = false;
                 }
                 self.scope_parts.pop();
                 self.scope_kinds.pop();
             }
-            Stmt::Import(i) => self.add_aliases(&i.names),
+            Stmt::Import(i) => self.add_aliases(&i.names, None),
             Stmt::ImportFrom(i) => {
                 if i.module.as_deref() != Some("__future__") {
-                    self.add_aliases(&i.names);
+                    self.add_aliases(&i.names, i.module.as_deref());
                 }
             }
             Stmt::Assign(a) => {
@@ -851,19 +1224,19 @@ impl<'a> DeadCodeVisitor<'a> {
                     }
                 }
                 for target in &a.targets {
-                    self.walk_expr(target);
+                    self.walk_assignment_target(target, a.range, a.targets.len() == 1, false);
                 }
                 self.walk_expr(&a.value);
             }
             Stmt::AnnAssign(a) => {
-                self.walk_expr(&a.target);
+                self.walk_assignment_target(&a.target, a.range, true, true);
                 self.walk_expr(&a.annotation);
                 if let Some(v) = &a.value {
                     self.walk_expr(v);
                 }
             }
             Stmt::AugAssign(a) => {
-                self.walk_expr(&a.target);
+                self.walk_assignment_target(&a.target, a.range, true, true);
                 self.walk_expr(&a.value);
             }
             Stmt::Return(r) => {
@@ -880,27 +1253,47 @@ impl<'a> DeadCodeVisitor<'a> {
             Stmt::For(s) => {
                 self.walk_expr(&s.target);
                 self.walk_expr(&s.iter);
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
-                for st in &s.orelse {
-                    self.walk_stmt(st);
-                }
+                self.walk_stmt_list(&s.body);
+                self.walk_stmt_list(&s.orelse);
             }
             Stmt::While(s) => {
+                match Self::conditional_outcome(&s.test) {
+                    Some(false) => self.add_unreachable_body(
+                        "while",
+                        s.range,
+                        "Unsatisfiable `while` condition",
+                    ),
+                    Some(true) if !s.orelse.is_empty() => {
+                        self.add_unreachable_body(
+                            "else",
+                            s.orelse[0].range(),
+                            "Unreachable `else` block",
+                        );
+                    }
+                    _ => {}
+                }
                 self.walk_expr(&s.test);
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
-                for st in &s.orelse {
-                    self.walk_stmt(st);
-                }
+                self.walk_stmt_list(&s.body);
+                self.walk_stmt_list(&s.orelse);
             }
             Stmt::If(s) => {
-                self.walk_expr(&s.test);
-                for st in &s.body {
-                    self.walk_stmt(st);
+                match Self::conditional_outcome(&s.test) {
+                    Some(false) => {
+                        self.add_unreachable_body("if", s.range, "Unsatisfiable `if` condition")
+                    }
+                    Some(true) => {
+                        if let Some(first_clause) = s.elif_else_clauses.first() {
+                            self.add_unreachable_body(
+                                "else",
+                                first_clause.body[0].range(),
+                                "Unreachable `else` block",
+                            );
+                        }
+                    }
+                    _ => {}
                 }
+                self.walk_expr(&s.test);
+                self.walk_stmt_list(&s.body);
                 // Python nests each `elif` as another `If` inside `orelse`,
                 // so recursion reached every branch's test and body. ruff
                 // flattens the whole chain into one clause list instead
@@ -910,9 +1303,7 @@ impl<'a> DeadCodeVisitor<'a> {
                     if let Some(test) = &clause.test {
                         self.walk_expr(test);
                     }
-                    for st in &clause.body {
-                        self.walk_stmt(st);
-                    }
+                    self.walk_stmt_list(&clause.body);
                 }
             }
             // `with` and `async with` (merged in ruff behind `is_async`).
@@ -923,9 +1314,7 @@ impl<'a> DeadCodeVisitor<'a> {
                         self.walk_expr(v);
                     }
                 }
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
+                self.walk_stmt_list(&s.body);
             }
             Stmt::Match(s) => {
                 self.walk_expr(&s.subject);
@@ -934,9 +1323,7 @@ impl<'a> DeadCodeVisitor<'a> {
                     if let Some(guard) = &case.guard {
                         self.walk_expr(guard);
                     }
-                    for st in &case.body {
-                        self.walk_stmt(st);
-                    }
+                    self.walk_stmt_list(&case.body);
                 }
             }
             Stmt::Raise(s) => {
@@ -951,24 +1338,16 @@ impl<'a> DeadCodeVisitor<'a> {
             // `is_star`). Also covers PEP 758's parenthesis-free
             // `except A, B:` form, which parses into the same handler shape.
             Stmt::Try(s) => {
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
+                self.walk_stmt_list(&s.body);
                 for handler in &s.handlers {
                     let ruff_python_ast::ExceptHandler::ExceptHandler(h) = handler;
                     if let Some(t) = &h.type_ {
                         self.walk_expr(t);
                     }
-                    for st in &h.body {
-                        self.walk_stmt(st);
-                    }
+                    self.walk_stmt_list(&h.body);
                 }
-                for st in &s.orelse {
-                    self.walk_stmt(st);
-                }
-                for st in &s.finalbody {
-                    self.walk_stmt(st);
-                }
+                self.walk_stmt_list(&s.orelse);
+                self.walk_stmt_list(&s.finalbody);
             }
             Stmt::Assert(s) => {
                 self.walk_expr(&s.test);

@@ -51,7 +51,8 @@ Mirrors the original Python pipeline, module-for-module, with two structural dif
 | `src/utils/line_index.rs` | Byte-offset → (line, column) conversion (the parser gives byte ranges, not line/col directly) |
 | `src/utils/nested_scopes.rs` | Class inherits-from chain tracking |
 | `src/utils/fnmatch.rs` | Rust port of Python's `fnmatch` glob semantics |
-| `src/actions/remove_file_parts_from_content.rs` | Byte-level code removal for `--fix` — preserves several documented quirks/bugs from the Python original for exact parity (see its module doc comment) |
+| `src/actions/get_unused_import_parts.rs` | Statement-aware removal parts for unused imports (commas, `;` separators, emptied statements) — port of upstream's `get_unused_import_parts.py` |
+| `src/actions/remove_file_parts_from_content.rs` | Byte-level code removal for `--fix` — preserves the Python original's quirks except where they produce invalid Python (see its module doc comment) |
 | `src/actions/parse_tach_config.rs` | tach.toml support (source_roots, interfaces/expose, unchecked modules, tach.domain.toml merging) |
 
 ### Where ruff's AST differs from CPython's `ast`
@@ -92,6 +93,8 @@ DC01 unused-variable, DC02 unused-function, DC03 unused-class, DC04 unused-metho
 ## Testing
 
 Unit tests live inline in `src/**` (`#[cfg(test)] mod tests`); integration tests live in `tests/*.rs`, using real temp directories (no filesystem mocking — this port always does real I/O) via the shared harness in `tests/common/mod.rs`. `tests/files/*.py` are real fixture files (not copies) whose exact line numbers are asserted against — do not reformat them without checking `tests/deadcode_integration.rs`.
+
+**Parity with upstream:** `python scripts/check.py parity` runs the Rust CLI and `legacy-python/` side by side on `tests/parity/cases/*` and every legacy fixture, comparing findings, exit codes and `--dry` diffs, and checks that Rust `--fix` never leaves an unparseable file. Known differences are listed with reasons in `tests/parity/known_differences.txt`; the check fails on a new difference *and* on a listed one that disappeared, so delete the line when you fix one. `python scripts/parity.py --show <case>` prints a case's differences.
 
 **Run a single test:**
 ```bash

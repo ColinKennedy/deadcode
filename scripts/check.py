@@ -6,6 +6,7 @@
     python scripts/check.py python              # ruff, ruff-format, mypy, privata
     python scripts/check.py pytest              # legacy suite on every Python
     python scripts/check.py pytest --python 3.12   # ...or just one
+    python scripts/check.py parity              # Rust CLI vs legacy-python
     python scripts/check.py --list
 
 The GitHub workflow invokes these exact commands, so CI and local runs cannot
@@ -98,9 +99,18 @@ def _pytest(version: str) -> list[str]:
     # raises on import without it.
     return [
         "uv", "run", "--quiet", "-p", version,
-        "--with", "pytest", "--with", "pytest-cov",
+        "--with", pinned("pytest"), "--with", pinned("pytest-cov"),
+        # The preserved upstream suite validates the repository's
+        # pre-commit configuration and imports PyYAML for that test.
+        "--with", pinned("pyyaml"),
         "pytest", "-q",
     ]
+
+
+def _parity() -> list[str]:
+    # Project mode, so legacy-python's `deadcode` is installed and importable:
+    # scripts/parity.py runs it in its own interpreter.
+    return ["uv", "run", "--quiet", "-p", LINT_PY, "python", str(ROOT / "scripts" / "parity.py")]
 
 
 CHECKS = [
@@ -113,10 +123,10 @@ CHECKS = [
     Check("ruff-format", "python", "ruff format --check (legacy-python)",
           lambda: _lint("ruff", "format", "--check", "deadcode", "tests"), LEGACY),
     Check("mypy", "python", "mypy (legacy-python)", _mypy, LEGACY),
-    Check("privata", "python", "module privacy (legacy-python)",
-          ["uvx", "privata", "."], LEGACY),
     Check("pytest", "python", "legacy test suite, per Python version",
           _pytest, LEGACY, per_python=True),
+    Check("parity", "parity", "Rust CLI vs legacy-python on tests/parity cases",
+          _parity, LEGACY),
 ]
 
 BY_NAME = {c.name: c for c in CHECKS}

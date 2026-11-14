@@ -1,15 +1,6 @@
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from deadcode.visitor.code_item import CodeItem
-
-# Sentinel key used to store a scope's own CodeItem definitions in a dict
-# separate from its nested child-scope dicts. A scope-part name (e.g. a class
-# or function name) and a CodeItem's name can be the same string (a class
-# named `Bar` nested under module `foo` is both a child scope `foo.Bar` and a
-# CodeItem named `Bar` defined in scope `foo`), so they can't share one dict's
-# key space without ambiguity. `object()` can't equal any string or CodeItem,
-# so it can't collide with either.
-_ITEMS = object()
 
 
 class NestedScope:
@@ -24,7 +15,7 @@ class NestedScope:
     """
 
     def __init__(self) -> None:
-        self._scopes: Dict[Union[str, CodeItem, object], Any] = {}
+        self._scopes: dict[str | CodeItem, Any] = {}
 
     def add(self, code_item: CodeItem) -> None:
         """Adds code item to nested scope."""
@@ -40,14 +31,11 @@ class NestedScope:
                 current_scope[scope_part] = {}  # Could use None if type cannot have scope
             current_scope = current_scope[scope_part]
 
-        # Store this scope's own definitions in their own dict (keyed by
-        # _ITEMS) instead of mixing them into current_scope's child-scope
-        # keys, so get() below can do a direct O(1) dict lookup by name
-        # instead of scanning current_scope.keys() for a match.
-        items: Dict[Union[str, CodeItem], CodeItem] = current_scope.setdefault(_ITEMS, {})
-        items[code_item] = code_item
+        # Note: assigning an equal CodeItem keeps the first inserted key object, because
+        # dictionaries keep the original key, so a redefined name resolves to the first definition.
+        current_scope[code_item] = {}
 
-    def get(self, name: str, scope: str) -> Optional[Union[CodeItem, str]]:
+    def get(self, name: str, scope: str) -> CodeItem | str | None:
         """Returns CodeItem which matches scoped_name (e.g. package.class.method.variable)
         from the given scope or None if its not found."""
 
@@ -58,7 +46,7 @@ class NestedScope:
         #       projects.models, billing.models, auth.models: only one root scope called models would be registered.
 
         # Create a stack of scopes begining from nearest and following with parent one
-        scopes: List[Dict[Union[str, CodeItem, object], Any]] = []
+        scopes: list[dict[CodeItem | str, dict[Any, Any]]] = []
         next_scope = self._scopes
         for scope_part in scope.split('.'):
             if scope_part not in next_scope:
@@ -66,14 +54,11 @@ class NestedScope:
             next_scope = next_scope[scope_part]
             scopes.insert(0, next_scope)
 
-        # Search for definition with provided name in scopes.
-        # CodeItem.__hash__/__eq__ accept plain strings, so a dict.get() with
-        # the string name directly finds the matching CodeItem key's value in
-        # O(1) average time.
+        # Search for definition with provided name in scopes
         for current_scope in scopes:
-            found_items: Optional[Dict[Union[str, CodeItem], CodeItem]] = current_scope.get(_ITEMS)
-            if found_items and (code_item := found_items.get(name)) is not None:
-                return code_item
+            if name in current_scope:
+                current_scope_keys = list(current_scope.keys())
+                return current_scope_keys[current_scope_keys.index(name)]
 
         return None
 
@@ -90,9 +75,6 @@ class NestedScope:
         # Write tests for Class and instance creations.
 
         # In this place I should get a list of names, which are being used in the invocation.
-
-        # if name == "spam":
-        #     breakpoint()
 
         code_item = self.get(name, scope)
         if isinstance(code_item, CodeItem):

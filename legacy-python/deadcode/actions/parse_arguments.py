@@ -1,18 +1,18 @@
 import argparse
-from typing import Any, Dict, List, Optional
+from typing import Any
 import sys
 import os
 
 if sys.version_info >= (3, 11):
-    import tomllib
+    import tomllib  # pragma: no cover
 else:
-    import tomli as tomllib
+    import tomli as tomllib  # pragma: no cover
 
 from deadcode.data_types import Args
 from deadcode.utils.flatten_lists import flatten_lists_of_comma_separated_values
 
 
-def parse_arguments(args: Optional[List[str]]) -> Args:
+def parse_arguments(args: list[str] | None) -> Args:
     """Parses arguments (execution options) for deadcode tool.
 
     Arguments for DeadCode can be provided via:
@@ -35,13 +35,13 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
     )
     parser.add_argument(
         '--dry',
-        help='Show changes which would be made in files with --fix option.',
+        help='Show changes which would be made in files.',
         action='store_true',
         default=False,
     )
     parser.add_argument(
         '--only',
-        help='Filenames (or path expressions), that will be reflected in the output and modified.',
+        help='Filenames (or path expressions), that will be reflected in the output (and modified if needed).',
         nargs='*',
         action='append',
         default=[],
@@ -56,10 +56,19 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
         type=str,
     )
     parser.add_argument(
+        '--ignore-rules',
+        help='Ignores findings with any of the provided rule codes, e.g. DC12.',
+        nargs='*',
+        action='append',
+        default=[],
+        type=str,
+    )
+    parser.add_argument(
         '--ignore-names',
         help=(
             'Removes provided list of names from the output. '
-            'Regexp expressions to match multiple names can also be provided.'
+            'Glob expressions to match multiple names can also be provided, '
+            'e.g. *Mixin will match all classes ending with Mixin.'
         ),
         nargs='*',
         action='append',
@@ -76,7 +85,10 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
     )
     parser.add_argument(
         '--ignore-bodies-if-decorated-with',
-        help='Ignores body of an expression if its decorated with one of the provided decorator names.',
+        help=(
+            'Ignores body of an expression if its decorated with one of the provided decorator names. '
+            'Decorator names include the leading @ and accept glob patterns such as @app.*.'
+        ),
         nargs='*',
         action='append',
         default=[],
@@ -84,7 +96,11 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
     )
     parser.add_argument(
         '--ignore-bodies-if-inherits-from',
-        help='Ignores body of a class if it inherits from any of the provided class names.',
+        help=(
+            'Ignores body of a class if it inherits from any of the provided class names. '
+            'The class name may be a plain name, a dotted path, or a glob; '
+            'a dotted base also matches its final component.'
+        ),
         nargs='*',
         action='append',
         default=[],
@@ -93,8 +109,7 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
     parser.add_argument(
         '--ignore-definitions',
         help=(
-            'Ignores definition (including name and body) if a '
-            'name of an expression matches any of the provided ones.'
+            'Ignores definition (including name and body) if a name of an expression matches any of the provided ones.'
         ),
         nargs='*',
         action='append',
@@ -105,7 +120,9 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
         '--ignore-definitions-if-inherits-from',
         help=(
             'Ignores definition (including name and body) of a class if '
-            'it inherits from any of the provided class names.'
+            'it inherits from any of the provided class names. '
+            'The class name may be a plain name, a dotted path, or a glob; '
+            'a dotted base also matches its final component.'
         ),
         nargs='*',
         action='append',
@@ -116,7 +133,8 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
         '--ignore-definitions-if-decorated-with',
         help=(
             'Ignores definition (including name and body) of an expression, '
-            'which is decorated with any of the provided decorator names.'
+            'which is decorated with any of the provided decorator names. '
+            'Decorator names include the leading @ and accept glob patterns such as @app.*.'
         ),
         nargs='*',
         action='append',
@@ -151,7 +169,10 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
     )
     parser.add_argument(
         '--ignore-names-if-decorated-with',
-        help='Ignores names of an expression, which is decorated with one of the provided decorator names.',
+        help=(
+            'Ignores names of an expression, which is decorated with one of the provided decorator names. '
+            'Decorator names include the leading @ and accept glob patterns such as @app.*.'
+        ),
         nargs='*',
         action='append',
         default=[],
@@ -168,42 +189,6 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
     )
 
     parser.add_argument(
-        '--ignore-non-self-attributes',
-        help=(
-            'Does not report unused attributes assigned on objects other than `self`, e.g. `foo.bar = 1` '
-            'where `foo` is not the first argument of the enclosing method. Such assignments may have '
-            'side effects or be consumed by code outside of the analysed files, so they cannot safely '
-            'be assumed dead.'
-        ),
-        action='store_true',
-        default=False,
-    )
-
-    parser.add_argument(
-        '--ignore-class-attributes',
-        help=(
-            'Does not report unused attributes assigned directly in a class body, e.g. `THING = "blah"` '
-            'inside a `class Foo:` block. Such attributes may control behaviour of inherited or overridden '
-            'methods, external frameworks, or metaclasses, so they cannot safely be assumed dead.'
-        ),
-        action='store_true',
-        default=False,
-    )
-
-    parser.add_argument(
-        '--tach-config',
-        help=(
-            'Paths to one or more tach.toml files (https://docs.gauge.sh) whose [[interfaces]] '
-            'declarations mark names as public API (never reported as unused), and whose '
-            'unchecked modules are skipped entirely.'
-        ),
-        nargs='*',
-        action='append',
-        default=[],
-        type=str,
-    )
-
-    parser.add_argument(
         '--no-color',
         help='Turn off colors in the output',
         action='store_true',
@@ -212,7 +197,7 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
 
     parser.add_argument(
         '--quiet',
-        help='Does not output anything. Makefile still fails with exit code 1 if unused names are found.',
+        help='Does not output anything. The command exits with code 1 if unused names are found.',
         action='store_true',
         default=False,
     )
@@ -231,6 +216,7 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
         default=False,
     )
     parser.add_argument(
+        '-V',
         '--version',
         help='Shows deadcode version',
         action='store_true',
@@ -244,9 +230,15 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
             parsed_args[arg_name] = flatten_lists_of_comma_separated_values(parsed_args.get(arg_name))
 
     # Extend the Args with the values provided in the pyproject.toml
-    for key, item in _parse_pyproject_toml().items():
-        if key in parsed_args:
+    for key, item in parse_pyproject_toml().items():
+        if key not in parsed_args:
+            continue
+        if isinstance(parsed_args[key], list):
+            if isinstance(item, str):
+                item = [item]
             parsed_args[key].extend(item)
+        elif item:
+            parsed_args[key] = item
 
     # Do not fix if dry option is provided:
     if parsed_args['dry']:
@@ -255,7 +247,7 @@ def parse_arguments(args: Optional[List[str]]) -> Args:
     return Args(**parsed_args)
 
 
-def _parse_pyproject_toml() -> Dict[str, Any]:
+def parse_pyproject_toml() -> dict[str, Any]:
     """Parse a pyproject toml file, pulling out relevant parts for Black.
 
     If parsing fails, will raise a tomllib.TOMLDecodeError.
@@ -268,6 +260,6 @@ def _parse_pyproject_toml() -> Dict[str, Any]:
     with open(pyproject_toml_filename, 'rb') as f:
         pyproject_toml = tomllib.load(f)
 
-    config: Dict[str, Any] = pyproject_toml.get('tool', {}).get('deadcode', {})
+    config: dict[str, Any] = pyproject_toml.get('tool', {}).get('deadcode', {})
     config = {k.replace('--', '').replace('-', '_'): v for k, v in config.items()}
     return config

@@ -49,6 +49,7 @@ fn flatten_comma_list(values: &[String]) -> Vec<String> {
 fn flatten_comma_separated(args: &mut Args) {
     args.only = flatten_comma_list(&args.only);
     args.exclude = flatten_comma_list(&args.exclude);
+    args.ignore_rules = flatten_comma_list(&args.ignore_rules);
     args.ignore_definitions = flatten_comma_list(&args.ignore_definitions);
     args.ignore_definitions_if_decorated_with =
         flatten_comma_list(&args.ignore_definitions_if_decorated_with);
@@ -70,10 +71,9 @@ fn flatten_comma_separated(args: &mut Args) {
 /// Extends (not replaces) each list-valued CLI arg with any values found in
 /// `pyproject.toml`'s `[tool.deadcode]` table (raw TOML array elements, not
 /// further comma-split — matches Python's `parsed_args[key].extend(item)`
-/// running strictly after CLI-side comma-flattening). Boolean-valued keys in
-/// that table are silently ignored (Python's equivalent would crash calling
-/// `.extend()` on a bool — not worth replicating a crash for something no
-/// test exercises).
+/// running strictly after CLI-side comma-flattening). Boolean settings are
+/// applied only when true: clap's flags are positive-only, so an explicit CLI
+/// flag remains enabled when configuration supplies `false`, as in Python.
 fn merge_pyproject_toml(args: &mut Args, pyproject_path: &Path) {
     let Ok(text) = std::fs::read_to_string(pyproject_path) else {
         return;
@@ -91,6 +91,19 @@ fn merge_pyproject_toml(args: &mut Args, pyproject_path: &Path) {
 
     for (raw_key, value) in table {
         let key = raw_key.replace("--", "").replace('-', "_");
+        if value.as_bool() == Some(true) {
+            match key.as_str() {
+                "fix" => args.fix = true,
+                "dry" => args.dry = true,
+                "no_color" => args.no_color = true,
+                "quiet" => args.quiet = true,
+                "count" => args.count = true,
+                "verbose" => args.verbose = true,
+                "version" => args.version = true,
+                _ => {}
+            }
+            continue;
+        }
         let Some(extra) = value.as_array().map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
@@ -103,6 +116,7 @@ fn merge_pyproject_toml(args: &mut Args, pyproject_path: &Path) {
             "paths" => args.paths.extend(extra),
             "only" => args.only.extend(extra),
             "exclude" => args.exclude.extend(extra),
+            "ignore_rules" => args.ignore_rules.extend(extra),
             "ignore_definitions" => args.ignore_definitions.extend(extra),
             "ignore_definitions_if_decorated_with" => {
                 args.ignore_definitions_if_decorated_with.extend(extra)
@@ -156,6 +170,12 @@ mod tests {
     fn comma_separated_exclude() {
         let args = parse(&[".", "--exclude=tests,venv"]);
         assert_eq!(args.exclude, vec!["tests", "venv"]);
+    }
+
+    #[test]
+    fn ignore_rules_accepts_comma_separated_and_repeated_values() {
+        let args = parse(&[".", "--ignore-rules=DC01,DC12", "--ignore-rules", "DC13"]);
+        assert_eq!(args.ignore_rules, vec!["DC01", "DC12", "DC13"]);
     }
 
     #[test]
@@ -236,6 +256,58 @@ mod tests {
         .unwrap();
         let args = parse_arguments_with_config(&[".".to_string()], &toml_path).unwrap();
         assert_eq!(args.ignore_names, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn pyproject_toml_extends_ignore_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let toml_path = dir.path().join("pyproject.toml");
+        std::fs::write(&toml_path, "[tool.deadcode]\nignore-rules = [\"DC12\"]\n").unwrap();
+        let args = parse_arguments_with_config(
+            &[
+                ".".to_string(),
+                "--ignore-rules".to_string(),
+                "DC01".to_string(),
+            ],
+            &toml_path,
+        )
+        .unwrap();
+        assert_eq!(args.ignore_rules, vec!["DC01", "DC12"]);
+    }
+
+    #[test]
+    fn pyproject_toml_enables_boolean_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let toml_path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &toml_path,
+            "[tool.deadcode]\nfix = true\nno-color = true\nverbose = true\n",
+        )
+        .unwrap();
+        let args = parse_arguments_with_config(&[".".to_string()], &toml_path).unwrap();
+        assert!(args.fix);
+        assert!(args.no_color);
+        assert!(args.verbose);
+    }
+
+    #[test]
+    fn configured_false_does_not_cancel_a_cli_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let toml_path = dir.path().join("pyproject.toml");
+        std::fs::write(&toml_path, "[tool.deadcode]\nfix = false\n").unwrap();
+        let args = parse_arguments_with_config(&[".".to_string(), "--fix".to_string()], &toml_path)
+            .unwrap();
+        assert!(args.fix);
+    }
+
+    #[test]
+    fn configured_dry_disables_configured_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        let toml_path = dir.path().join("pyproject.toml");
+        std::fs::write(&toml_path, "[tool.deadcode]\nfix = true\ndry = true\n").unwrap();
+        let args = parse_arguments_with_config(&[".".to_string()], &toml_path).unwrap();
+        assert!(args.dry);
+        assert!(!args.fix);
     }
 
     #[test]

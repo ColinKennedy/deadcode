@@ -47,8 +47,11 @@ pub fn main_with_config(
     // and '--version' in command_line_args) or '--version' in sys.argv` —
     // the real process argv is checked regardless of what was explicitly
     // passed in.
-    let requests_version = command_line_args.is_some_and(|a| a.iter().any(|s| s == "--version"))
-        || real_argv.iter().any(|s| s == "--version");
+    let requests_version = command_line_args
+        .is_some_and(|a| a.iter().any(|s| matches!(s.as_str(), "--version" | "-V")))
+        || real_argv
+            .iter()
+            .any(|s| matches!(s.as_str(), "--version" | "-V"));
     if requests_version {
         return Ok(Some(VERSION.to_string()));
     }
@@ -69,6 +72,12 @@ pub fn main_with_config(
         .get_unused_code_items()
         .into_iter()
         .filter(|item| filenames.is_reportable(&item.filename))
+        .filter(|item| {
+            !args
+                .ignore_rules
+                .iter()
+                .any(|rule| rule == item.error_code())
+        })
         .collect::<Vec<_>>();
 
     // Files that couldn't be parsed contribute no findings, so without this a
@@ -147,8 +156,12 @@ pub fn print_main_action(
 ) -> ExitAction {
     let real_argv: Vec<String> = std::env::args().skip(1).collect();
     let is_version_request = command_line_args
-        .map(|a| a.iter().any(|s| s == "--version"))
-        .unwrap_or_else(|| real_argv.iter().any(|s| s == "--version"));
+        .map(|a| a.iter().any(|s| matches!(s.as_str(), "--version" | "-V")))
+        .unwrap_or_else(|| {
+            real_argv
+                .iter()
+                .any(|s| matches!(s.as_str(), "--version" | "-V"))
+        });
 
     match main_with_config(command_line_args, pyproject_path) {
         Ok(Some(result)) => {
@@ -215,6 +228,12 @@ mod tests {
     }
 
     #[test]
+    fn short_version_flag_returns_version_string() {
+        let result = run(&["-V"]).unwrap();
+        assert_eq!(result, Some(VERSION.to_string()));
+    }
+
+    #[test]
     fn unused_variable_end_to_end() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("foo.py");
@@ -250,5 +269,99 @@ mod tests {
         std::fs::write(&file, "a = 1\nb = 2\n").unwrap();
         let result = run(&[file.to_str().unwrap(), "--count"]).unwrap();
         assert_eq!(result, Some("2".to_string()));
+    }
+
+    #[test]
+    fn ignore_rules_suppresses_matching_findings() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("foo.py");
+        std::fs::write(&file, "unused_var = 1\n").unwrap();
+        let result = run(&[
+            file.to_str().unwrap(),
+            "--ignore-rules",
+            "DC01",
+            "--no-color",
+        ])
+        .unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn decorated_definition_ignore_suppresses_the_whole_definition() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("foo.py");
+        std::fs::write(
+            &file,
+            "@app.route(\"/\")\ndef handler():\n    unused_local = 1\n",
+        )
+        .unwrap();
+        let result = run(&[
+            file.to_str().unwrap(),
+            "--ignore-definitions-if-decorated-with=@app.*",
+        ])
+        .unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn decorated_name_ignore_still_analyzes_the_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("foo.py");
+        std::fs::write(&file, "@deco\ndef handler():\n    unused_local = 1\n").unwrap();
+        let result = run(&[
+            file.to_str().unwrap(),
+            "--ignore-names-if-decorated-with=@deco",
+            "--no-color",
+        ])
+        .unwrap()
+        .unwrap();
+        assert!(!result.contains("handler"));
+        assert!(result.contains("unused_local"));
+    }
+
+    #[test]
+    fn decorated_body_ignore_keeps_the_definition_but_ignores_its_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("foo.py");
+        std::fs::write(&file, "@deco\ndef handler():\n    unused_local = 1\n").unwrap();
+        let result = run(&[
+            file.to_str().unwrap(),
+            "--ignore-bodies-if-decorated-with=@deco",
+            "--no-color",
+        ])
+        .unwrap()
+        .unwrap();
+        assert!(result.contains("handler"));
+        assert!(!result.contains("unused_local"));
+    }
+
+    #[test]
+    fn definition_name_ignore_suppresses_a_function_and_its_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("foo.py");
+        std::fs::write(&file, "def ignored():\n    unused_local = 1\n").unwrap();
+        let result = run(&[
+            file.to_str().unwrap(),
+            "--ignore-definitions=ignored",
+            "--no-color",
+        ])
+        .unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn body_name_ignore_keeps_a_class_but_ignores_its_members() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("foo.py");
+        std::fs::write(&file, "class Kept:\n    unused_member = 1\n").unwrap();
+        let result = run(&[
+            file.to_str().unwrap(),
+            "--ignore-bodies-of=Kept",
+            "--no-color",
+        ])
+        .unwrap()
+        .unwrap();
+        assert!(result.contains("Kept"));
+        assert!(!result.contains("unused_member"));
     }
 }

@@ -1,66 +1,94 @@
-from unittest import skip
+from pathlib import PureWindowsPath
 
+import pytest
+
+from deadcode.actions.fix_or_show_unused_code import fix_or_show_unused_code
 from deadcode.cli import main
-from deadcode.utils.base_test_case import BaseTestCase
+from deadcode.data_types import Args, Part
+from deadcode.visitor.code_item import CodeItem
 
 
-class TestFixCliOption(BaseTestCase):
-    def test_unused_class_was_removed(self):
-        self.files = {
-            'ignore_names_by_pattern.py': b"""
+def test_fix_groups_findings_by_forward_slash_filename(virtual_file_system):
+    # Having
+    virtual_file_system.files = {'pkg/mod.py': b'UNUSED = 1\nprint("keep")\n'}
+    code_item = CodeItem(
+        name='UNUSED',
+        type_='variable',
+        filename=PureWindowsPath('pkg\\mod.py'),
+        code_parts=[Part(1, 1, 0, 10)],
+    )
+
+    # When
+    result = fix_or_show_unused_code([code_item], Args(fix=True))
+
+    # Then
+    assert result == ''
+    virtual_file_system.assert_updated_files({'pkg/mod.py': b'print("keep")\n'})
+
+
+def test_unused_class_was_removed(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'ignore_names_by_pattern.py': b"""
                 class UnusedClass:
                     pass
 
                 print("Keep the file")
                 """
-        }
+    }
 
-        unused_names = main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
-        self.assertEqual(
-            unused_names,
-            (
-                'ignore_names_by_pattern.py:1:0: DC03 Class `UnusedClass` is never used\n\n'
-                'Removed 1 unused code item!'
-            ),
-        )
+    # When
+    unused_names = main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
 
-        self.assertFiles(
-            {
-                'ignore_names_by_pattern.py': b"""
+    # Then
+    assert unused_names == (
+        'ignore_names_by_pattern.py:1:0: DC03 Class `UnusedClass` is never used\n\nRemoved 1 unused code item!'
+    )
+
+    virtual_file_system.assert_files(
+        {
+            'ignore_names_by_pattern.py': b"""
             print("Keep the file")
         """
-            }
-        )
+        }
+    )
 
-    def test_function_removal(self):
-        self.files = {
-            'ignore_names_by_pattern.py': b"""
+
+def test_function_removal(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'ignore_names_by_pattern.py': b"""
                 def foo(bar: str = "Bar") -> str:
                     return 1 ** 2
 
                 print("Keep the file")
                 """
-        }
+    }
 
-        unused_names = main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
-        self.assertEqual(
-            unused_names,
-            ('ignore_names_by_pattern.py:1:0: DC02 Function `foo` is never used\n\n' 'Removed 1 unused code item!'),
-        )
+    # When
+    unused_names = main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
 
-        self.assertFiles(
-            {
-                'ignore_names_by_pattern.py': b"""
+    # Then
+    assert unused_names == (
+        'ignore_names_by_pattern.py:1:0: DC02 Function `foo` is never used\n\nRemoved 1 unused code item!'
+    )
+
+    virtual_file_system.assert_files(
+        {
+            'ignore_names_by_pattern.py': b"""
                 print("Keep the file")
         """
-            }
-        )
+        }
+    )
 
-    # TODO: treat variables unused if they are referenced only by other unused code.
 
-    def test_function_removal_in_the_middle(self):
-        self.files = {
-            'ignore_names_by_pattern.py': b"""
+# TODO: treat variables unused if they are referenced only by other unused code.
+
+
+def test_function_removal_in_the_middle(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'ignore_names_by_pattern.py': b"""
                 used_variable = "one"
 
                 def foo(bar: str = "Bar") -> str:
@@ -69,28 +97,32 @@ class TestFixCliOption(BaseTestCase):
                 spam = "Spam"
                 print(spam, used_variable)
                 """
-        }
+    }
 
-        unused_names = main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
-        self.assertEqual(
-            unused_names,
-            ('ignore_names_by_pattern.py:3:0: DC02 Function `foo` is never used\n\n' 'Removed 1 unused code item!'),
-        )
+    # When
+    unused_names = main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
 
-        self.assertFiles(
-            {
-                'ignore_names_by_pattern.py': b"""
+    # Then
+    assert unused_names == (
+        'ignore_names_by_pattern.py:3:0: DC02 Function `foo` is never used\n\nRemoved 1 unused code item!'
+    )
+
+    virtual_file_system.assert_files(
+        {
+            'ignore_names_by_pattern.py': b"""
                 used_variable = "one"
 
                 spam = "Spam"
                 print(spam, used_variable)
                 """
-            }
-        )
+        }
+    )
 
-    def test_function_removal_of_several_items(self):
-        self.files = {
-            'ignore_names_by_pattern.py': b"""
+
+def test_function_removal_of_several_items(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'ignore_names_by_pattern.py': b"""
                 used_variable = "one"
 
                 unused_variable = ""
@@ -101,32 +133,34 @@ class TestFixCliOption(BaseTestCase):
                 spam = "Spam"
                 print(spam, used_variable)
                 """
-        }
+    }
 
-        unused_names = main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
-        self.assertEqual(
-            unused_names,
-            (
-                'ignore_names_by_pattern.py:3:0: DC01 Variable `unused_variable` is never used\n'
-                'ignore_names_by_pattern.py:5:0: DC02 Function `unused_function` is never used\n\n'
-                'Removed 2 unused code items!'
-            ),
-        )
+    # When
+    unused_names = main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
 
-        self.assertFiles(
-            {
-                'ignore_names_by_pattern.py': b"""
+    # Then
+    assert unused_names == (
+        'ignore_names_by_pattern.py:3:0: DC01 Variable `unused_variable` is never used\n'
+        'ignore_names_by_pattern.py:5:0: DC02 Function `unused_function` is never used\n\n'
+        'Removed 2 unused code items!'
+    )
+
+    virtual_file_system.assert_files(
+        {
+            'ignore_names_by_pattern.py': b"""
                 used_variable = "one"
 
                 spam = "Spam"
                 print(spam, used_variable)
                 """
-            }
-        )
+        }
+    )
 
-    def test_empty_lines_are_removed_properly_indented(self):
-        self.files = {
-            'foo.py': b"""
+
+def test_empty_lines_are_removed_properly_indented(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
                     name = "World"
 
                     unused_variable = "This variable is unused"
@@ -162,13 +196,15 @@ class TestFixCliOption(BaseTestCase):
                     instance = Example()
                     print(instance.foo())
                 """
-        }
+    }
 
-        main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
+    # When
+    main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
                     name = "World"
 
                     def say_hello_world():
@@ -187,12 +223,14 @@ class TestFixCliOption(BaseTestCase):
                     instance = Example()
                     print(instance.foo())
                 """
-            }
-        )
+        }
+    )
 
-    def test_empty_lines_are_removed_properly(self):
-        self.files = {
-            'foo.py': b"""
+
+def test_empty_lines_are_removed_properly(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
                 NAME = "World"
 
                 UNUSED_VARIABLE = "This variable is unused"
@@ -222,13 +260,15 @@ class TestFixCliOption(BaseTestCase):
                 instance = Example()
                 print(instance.foo())
                 """
-        }
+    }
 
-        main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
+    # When
+    main(['ignore_names_by_pattern.py', '--no-color', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
                     NAME = "World"
 
                     def say_hello_world():
@@ -246,14 +286,14 @@ class TestFixCliOption(BaseTestCase):
                     instance = Example()
                     print(instance.foo())
                 """
-            }
-        )
+        }
+    )
 
 
-class TestAddPassForEmptyBlock(BaseTestCase):
-    def test_empty_class_block(self):
-        self.files = {
-            'foo.py': b"""
+def test_empty_class_block(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
             class Example:
                 def unused_method(self):
                     print("Unused method")
@@ -261,97 +301,97 @@ class TestAddPassForEmptyBlock(BaseTestCase):
             example = Example()
             print(example)
             """
-        }
+    }
 
-        main(['.', '--fix'])
+    # When
+    main(['.', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
             class Example:
                 pass
 
             example = Example()
             print(example)
             """
-            }
-        )
+        }
+    )
 
-    def test_empty_function_block(self):
-        self.files = {
-            'foo.py': b"""
+
+def test_empty_function_block(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
             def foo():
                 bar = 1
 
             foo()
             """
-        }
+    }
 
-        main(['.', '--fix'])
+    # When
+    main(['.', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
             def foo():
                 pass
 
             foo()
             """
-            }
-        )
+        }
+    )
 
-    def test_empty_if_main_block(self):
-        self.files = {
-            'foo.py': b"""
+
+def test_empty_if_main_block(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
             import sys
 
             if sys.argv[1:]:
                 unused = 1
             """
-        }
+    }
 
-        main(['.', '--fix'])
+    # When
+    main(['.', '--fix'])
 
-        # TODO: assertion still does not work, why there is a difference in the last line?
-        self.assertFiles(
-            {
-                'foo.py': b"""
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
             import sys
 
             if sys.argv[1:]:
                 pass
             """
-            }
-        )
+        }
+    )
 
-    def test_empty_if_else_block(self):
-        self.files = {
-            'foo.py': b"""
+
+def test_empty_if_else_block(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
             if spam:
                 bar = 1
                 print(bar)
             else:
                 unused = 1
             """
-        }
+    }
 
-        main(['.', '--fix'])
+    # When
+    main(['.', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
-            if spam:
-                bar = 1
-                print(bar)
-            else:
-                pass
-            """
-            }
-        )
-
-    @skip
-    def test_empty_if_statement_else_block(self):
-        self.files = {
+    # Then
+    virtual_file_system.assert_files(
+        {
             'foo.py': b"""
             if spam:
                 bar = 1
@@ -360,72 +400,101 @@ class TestAddPassForEmptyBlock(BaseTestCase):
                 pass
             """
         }
+    )
 
-        main(['.', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
+@pytest.mark.skip(reason='Skipped without a recorded reason before the pytest migration; behaviour preserved')
+def test_empty_if_statement_else_block(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
+            if spam:
+                bar = 1
+                print(bar)
+            else:
+                pass
+            """
+    }
+
+    # When
+    main(['.', '--fix'])
+
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
             if spam:
                 bar = 1
                 print(bar)
             """
-            }
-        )
+        }
+    )
 
-    @skip
-    def test_if_is_not_fixed_correctly_when_branch_is_unreachable(self):
-        self.files = {
-            'foo.py': b"""
+
+@pytest.mark.skip(reason='Skipped without a recorded reason before the pytest migration; behaviour preserved')
+def test_if_is_not_fixed_correctly_when_branch_is_unreachable(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
             if False:
                 bar = 1
                 print(bar)
             else:
                 unused = 1
             """
-        }
+    }
 
-        main(['.', '--fix'])
+    # When
+    main(['.', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
             if True:
                 pass
             """
-            }
-        )
+        }
+    )
 
-    def test_empty_with_block(self):
-        self.files = {
-            'foo.py': b"""
+
+def test_empty_with_block(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
             with open("tmp.txt") as f:
                 unused = 1
             """
-        }
+    }
 
-        main(['.', '--fix'])
+    # When
+    main(['.', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
             with open("tmp.txt"):
                 pass
             """
-            }
-        )
-
-    def test_empty_block_is_at_the_end_of_file(self):
-        pass  # tested by test_empty_with_block
-
-    def test_some_code_follows_empty_block(self):
-        pass  # tested by test_empty_class_block
+        }
+    )
 
 
-class TestKeepCorrectNumberOfEmptyLinesAfterRemovalOfCodeBlock(BaseTestCase):
-    def test_space_is_kept_after_whole_class_block_removal(self):
-        self.files = {
-            'foo.py': b"""
+def test_empty_block_is_at_the_end_of_file():
+    # Having
+    pass  # tested by test_empty_with_block
+
+
+def test_some_code_follows_empty_block():
+    # Having
+    pass  # tested by test_empty_class_block
+
+
+def test_space_is_kept_after_whole_class_block_removal(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
             class Example:
                 def unused_method(self):
                     print("Unused method")
@@ -433,25 +502,29 @@ class TestKeepCorrectNumberOfEmptyLinesAfterRemovalOfCodeBlock(BaseTestCase):
             example = Example()
             print(example)
             """
-        }
+    }
 
-        main(['.', '--fix'])
+    # When
+    main(['.', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
             class Example:
                 pass
 
             example = Example()
             print(example)
             """
-            }
-        )
+        }
+    )
 
-    def test_two_spaces_are_kept_after_whole_class_block_removal(self):
-        self.files = {
-            'foo.py': b"""
+
+def test_two_spaces_are_kept_after_whole_class_block_removal(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
             class Example:
                 def unused_method(self):
                     print("Unused method")
@@ -460,13 +533,15 @@ class TestKeepCorrectNumberOfEmptyLinesAfterRemovalOfCodeBlock(BaseTestCase):
             example = Example()
             print(example)
             """
-        }
+    }
 
-        main(['.', '--fix'])
+    # When
+    main(['.', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
             class Example:
                 pass
 
@@ -474,12 +549,14 @@ class TestKeepCorrectNumberOfEmptyLinesAfterRemovalOfCodeBlock(BaseTestCase):
             example = Example()
             print(example)
             """
-            }
-        )
+        }
+    )
 
-    def test_two_spaces_are_kept_after_one_method_removal(self):
-        self.files = {
-            'foo.py': b"""
+
+def test_two_spaces_are_kept_after_one_method_removal(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
             class Example:
                 def unused_method(self):
                     print("Unused method")
@@ -491,13 +568,15 @@ class TestKeepCorrectNumberOfEmptyLinesAfterRemovalOfCodeBlock(BaseTestCase):
             example = Example()
             print(example.used_method())
             """
-        }
+    }
 
-        main(['.', '--fix'])
+    # When
+    main(['.', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
             class Example:
                 def used_method(self):
                     print("Used method")
@@ -506,23 +585,27 @@ class TestKeepCorrectNumberOfEmptyLinesAfterRemovalOfCodeBlock(BaseTestCase):
             example = Example()
             print(example.used_method())
             """
-            }
-        )
+        }
+    )
 
-    def test_assignment(self):
-        self.files = {
-            'foo.py': b"""
+
+def test_assignment(virtual_file_system):
+    # Having
+    virtual_file_system.files = {
+        'foo.py': b"""
             bar = 1
             print("Keep the file")
             """
-        }
+    }
 
-        main(['.', '--fix'])
+    # When
+    main(['.', '--fix'])
 
-        self.assertFiles(
-            {
-                'foo.py': b"""
+    # Then
+    virtual_file_system.assert_files(
+        {
+            'foo.py': b"""
             print("Keep the file")
         """
-            }
-        )
+        }
+    )

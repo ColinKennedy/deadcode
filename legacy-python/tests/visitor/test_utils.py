@@ -1,31 +1,72 @@
 import ast
 
-from deadcode.visitor.utils import get_decorator_name
+import pytest
+
+from deadcode.visitor.utils import (
+    condition_is_always_false,
+    condition_is_always_true,
+    get_base_class_names,
+    get_decorator_name,
+)
 
 
-class TestUtils:
-    def test_get_decorator_name_attribute(self):
-        # Test with a decorator with an attribute
-        decorator = ast.Attribute(value=ast.Name(id='module', ctx=ast.Load()), attr='my_decorator1')
-        assert get_decorator_name(decorator) == '@module.my_decorator1'
+@pytest.mark.parametrize(
+    ('source', 'expected_name'),
+    [
+        ('@deco', '@deco'),
+        ('@mod.deco', '@mod.deco'),
+        ('@a.b.c', '@a.b.c'),
+        ('@deco()', '@deco'),
+        ('@app.get("/x")', '@app.get'),
+        ('@a.b.c.get(1)', '@a.b.c.get'),
+        ('@factory()()', '@factory'),
+        ('@a.factory()()', '@a.factory'),
+        ('@Class().function()', '@Class.function'),
+        ('@Class().function', '@Class.function'),
+        ('@decorators[0]', '@decorators[0]'),
+        ('@a.b[0]', '@a.b[0]'),
+        ('@getattr(x, "y")', '@getattr'),
+        ('@(lambda f: f)', '@lambda f: f'),
+        ('@property', '@property'),
+    ],
+)
+def test_get_decorator_name(source: str, expected_name: str) -> None:
+    # When
+    decorator = ast.parse(f'{source}\ndef function():\n    pass\n').body[0].decorator_list[0]
 
-        # Test with a complex decorator
-        decorator = ast.Attribute(
-            value=decorator,  # Create nested attributes
-            attr='my_decorator2',
-            ctx=ast.Load(),
-        )
-        assert get_decorator_name(decorator) == '@module.my_decorator1.my_decorator2'
+    # Then
+    assert get_decorator_name(decorator) == expected_name
 
-    def test_get_decorator_name_call(self):
-        decorator = ast.Attribute(value=ast.Name(id='module', ctx=ast.Load()), attr='my_decorator')
-        assert get_decorator_name(decorator) == '@module.my_decorator'
 
-        # Test with a decorator that is a call
-        decorator = ast.Call(func=decorator, args=[], keywords=[])
-        assert get_decorator_name(decorator) == '@module.my_decorator'
+@pytest.mark.parametrize(
+    ('source', 'expected_true', 'expected_false'),
+    [
+        ('True and True', True, False),
+        ('True or False', True, False),
+        ('False and True', False, True),
+        ('False or False', False, True),
+    ],
+)
+def test_bool_operator_conditions_are_evaluated(source: str, expected_true: bool, expected_false: bool) -> None:
+    # Having
+    condition = ast.parse(source, mode='eval').body
 
-    def test_get_decorator_name_bare_name(self):
-        # Test with a bare name decorator, e.g. @property, @staticmethod
-        decorator = ast.Name(id='property', ctx=ast.Load())
-        assert get_decorator_name(decorator) == '@property'
+    # When
+    is_always_true = condition_is_always_true(condition)
+    is_always_false = condition_is_always_false(condition)
+
+    # Then
+    assert is_always_true is expected_true
+    assert is_always_false is expected_false
+
+
+@pytest.mark.parametrize('base', ['factory()', 'Generic[int]'])
+def test_get_base_class_names_returns_empty_list_for_non_name_bases(base: str) -> None:
+    # Having
+    node = ast.parse(f'class A({base}):\n    pass\n').body[0].bases[0]
+
+    # When
+    names = get_base_class_names(node)
+
+    # Then
+    assert names == []

@@ -16,9 +16,13 @@
 //!    misaligned every later part. Single-line parts sharing a line are now
 //!    all applied, right-to-left.
 //!
-//! Every other documented quirk (the `pass`-insertion rules, the blank-line
-//! bookkeeping, Python's forgiving slice semantics) is still reproduced
-//! exactly.
+//! 3. **Unindented `pass`.** When an emptied block was followed by further
+//!    removals (a class's last method, then the next top-level class), the
+//!    inserted `pass` took the *last* removal's indentation -- column 0 at
+//!    end of file. It now takes the first removal's after the kept code.
+//!
+//! Every other documented quirk (the blank-line bookkeeping, Python's
+//! forgiving slice semantics) is still reproduced exactly.
 
 use crate::data_types::Part;
 
@@ -250,7 +254,14 @@ pub fn remove_file_parts_from_content(
         if current_lineno > from_line && current_lineno < to_line {
             continue;
         } else if current_lineno == from_line {
-            indentation_of_first_removed_line = get_indentation(&line);
+            // Only the first removal after kept code decides where an inserted
+            // `pass` goes. Consecutive removals (a class body's last method,
+            // then the next top-level class) would otherwise leave the
+            // outermost one's indentation -- a `pass` at column 0 under a
+            // `class X:` that lost its whole body.
+            if !was_block_removed {
+                indentation_of_first_removed_line = get_indentation(&line);
+            }
 
             if from_line == to_line {
                 // Consume *every* single-line part on this line, not just the

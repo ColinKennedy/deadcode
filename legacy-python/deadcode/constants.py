@@ -1,4 +1,4 @@
-from typing import Dict, Literal
+from typing import Literal
 
 
 UnusedCodeType = Literal[
@@ -9,6 +9,7 @@ UnusedCodeType = Literal[
     'method',
     'property',
     'variable',
+    'unreachable_body',
     'unreachable_code',
     'name',
     'unused_file',
@@ -17,7 +18,8 @@ UnusedCodeType = Literal[
 ]
 
 
-_UnusedCodeErrorCode = Literal[
+UnusedCodeErrorCode = Literal[
+    'DC',
     'DC01',
     'DC02',
     'DC03',
@@ -33,7 +35,7 @@ _UnusedCodeErrorCode = Literal[
 ]
 
 
-ERROR_TYPE_TO_ERROR_CODE: Dict[UnusedCodeType, _UnusedCodeErrorCode] = {
+ERROR_TYPE_TO_ERROR_CODE: dict[UnusedCodeType, UnusedCodeErrorCode] = {
     'variable': 'DC01',
     'function': 'DC02',
     'class': 'DC03',
@@ -42,8 +44,9 @@ ERROR_TYPE_TO_ERROR_CODE: Dict[UnusedCodeType, _UnusedCodeErrorCode] = {
     'name': 'DC06',
     'import': 'DC07',
     'property': 'DC08',
-    'unreachable_code': 'DC09',
+    'unreachable_body': 'DC09',
     'unused_file': 'DC11',
     'commented_out_code': 'DC12',
-    'ignore_expression': 'DC13',
+    'ignore_expression': 'DC',
+    'unreachable_code': 'DC13',
 }

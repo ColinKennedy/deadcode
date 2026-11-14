@@ -1,43 +1,28 @@
 from logging import getLogger
-from typing import List
 from pathlib import Path
 
-from deadcode.actions.parse_tach_config import load_tach_index
 from deadcode.data_types import Args
-from deadcode.visitor.ignore import match
+from deadcode.utils.normalize_path import normalize_path
+from deadcode.visitor.ignore import _match
 
 logger = getLogger()
 
 
-def find_python_filenames(args: Args) -> List[str]:
-    tach_index = load_tach_index(args.tach_config)
-
+def find_python_filenames(args: Args) -> list[str]:
     filenames = []
-    paths: List[str] = list(args.paths)
+    paths: list[str] = list(args.paths)
     while paths:
         path = Path(paths.pop())
 
-        if match(path, args.exclude):
+        if _match(path, args.exclude):
             if args.verbose:
-                logger.info(f'Ignoring: {path}')
-            continue
-
-        if tach_index.is_outside_source_roots(path):
-            if args.verbose:
-                logger.info(f'Ignoring (outside tach source roots): {path}')
-            continue
-
-        if path.is_file() and path.suffix == '.py' and tach_index.is_unchecked(path):
-            if args.verbose:
-                logger.info(f'Ignoring (unchecked tach module): {path}')
+                logger.info(f'Ignoring: {normalize_path(path)}')
             continue
 
         if path.is_file() and path.suffix == '.py':
-            # .as_posix() (not str()) so filenames stay forward-slash on every
-            # OS, matching the paths given on the command line.
-            filenames.append(path.as_posix())
+            filenames.append(normalize_path(path))
         elif path.is_dir():
-            paths += list([p.as_posix() for p in path.glob('*')])
+            paths += list([normalize_path(p) for p in path.glob('*')])
         elif not path.exists():
             # TODO: unify error logging and reporting
             # Maybe a cli flag could be added to stop on error
@@ -47,18 +32,3 @@ def find_python_filenames(args: Args) -> List[str]:
         sep = '\n  - '
         logger.info(f'Files to be checked for dead code: {sep.join(filenames)}')
     return filenames
-
-
-# Should show errors, if files do not exist.
-# Could mock directories: os.path.isfile os.walk -> replace this one with rglob
-
-# Should use list dir myself.
-
-# TODO: Whats the solution for mocking the file system checking?
-# Every single provided file is assumed to exist.
-
-
-# # TODO: investigate what can be reused from this module
-#     Loop over all given paths, abort if any ends with .pyc, add the other given
-#     files (even those not ending with .py) and collect all .py files under the
-#     given directories.

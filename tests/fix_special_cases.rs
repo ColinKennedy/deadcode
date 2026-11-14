@@ -33,51 +33,119 @@ mod empty_files {
     }
 }
 
-/// Negative-parity: literal `if True`/`if False`/`while True`/`while False`
-/// branches are NOT pruned/fixed — this port deliberately doesn't implement
-/// unreachable-code removal at all (see `dead_code_visitor.rs`'s module doc
-/// comment: the Python original computes it but never surfaces it either).
-mod unreachable_code_is_not_removed {
+mod unreachable_literal_condition {
     use super::*;
 
-    // Bodies deliberately define nothing (just literal-arg `print` calls) so
-    // the only thing under test is "does a DC09 finding ever leak into the
-    // report" — no unrelated DC01 confounds the `result == None` assertion.
-
     #[test]
-    fn if_true_else_unchanged() {
+    fn true_if_removes_else_body_and_keeps_a_valid_block() {
         let p = Project::new();
         let src = "if True:\n    print(\"a\")\nelse:\n    print(\"b\")\n";
         p.write("foo.py", src);
-        assert_eq!(p.run(&["foo.py", "--no-color", "--fix"]), None);
-        assert_eq!(p.read("foo.py"), src);
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC09 Unreachable `else` block"));
+        assert_eq!(
+            p.read("foo.py"),
+            "if True:\n    print(\"a\")\nelse:\n    pass\n"
+        );
     }
 
     #[test]
-    fn if_false_else_unchanged() {
+    fn false_if_removes_the_full_statement() {
         let p = Project::new();
         let src = "if False:\n    print(\"a\")\nelse:\n    print(\"b\")\n";
         p.write("foo.py", src);
-        assert_eq!(p.run(&["foo.py", "--no-color", "--fix"]), None);
-        assert_eq!(p.read("foo.py"), src);
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC09 Unsatisfiable `if` condition"));
+        assert!(!p.exists("foo.py"));
     }
 
     #[test]
-    fn while_true_else_unchanged() {
+    fn true_while_removes_else_body_and_keeps_a_valid_block() {
         let p = Project::new();
         let src = "while True:\n    print(\"a\")\n    break\nelse:\n    print(\"b\")\n";
         p.write("foo.py", src);
-        assert_eq!(p.run(&["foo.py", "--no-color", "--fix"]), None);
-        assert_eq!(p.read("foo.py"), src);
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC09 Unreachable `else` block"));
+        assert_eq!(
+            p.read("foo.py"),
+            "while True:\n    print(\"a\")\n    break\nelse:\n    pass\n"
+        );
     }
 
     #[test]
-    fn while_false_else_unchanged() {
+    fn false_while_removes_the_full_statement() {
         let p = Project::new();
         let src = "while False:\n    print(\"a\")\nelse:\n    print(\"b\")\n";
         p.write("foo.py", src);
-        assert_eq!(p.run(&["foo.py", "--no-color", "--fix"]), None);
-        assert_eq!(p.read("foo.py"), src);
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC09 Unsatisfiable `while` condition"));
+        assert!(!p.exists("foo.py"));
+    }
+
+    #[test]
+    fn boolean_expression_with_an_unknown_still_reports_a_provable_outcome() {
+        let p = Project::new();
+        p.write("foo.py", "if unknown and False:\n    print(\"never\")\n");
+        let result = p.run(&["foo.py", "--no-color"]).unwrap();
+        assert!(result.contains("DC09 Unsatisfiable `if` condition"));
+    }
+}
+
+mod unreachable_code_after_terminal_statement {
+    use super::*;
+
+    #[test]
+    fn reports_and_removes_the_remaining_statement_list_suffix() {
+        let p = Project::new();
+        p.write(
+            "foo.py",
+            "def used():\n    return 1\n    print(\"unreachable\")\n\nused()\n",
+        );
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC13 unreachable code after 'return'"));
+        assert_eq!(p.read("foo.py"), "def used():\n    return 1\nused()\n");
+    }
+
+    #[test]
+    fn noqa_suppresses_the_finding() {
+        let p = Project::new();
+        p.write(
+            "foo.py",
+            "def used():\n    return 1\n    print(\"unreachable\")  # noqa: DC13\n\nused()\n",
+        );
+        assert_eq!(p.run(&["foo.py", "--no-color"]), None);
+    }
+}
+
+mod commented_out_code {
+    use super::*;
+
+    #[test]
+    fn reports_and_removes_a_standalone_code_comment() {
+        let p = Project::new();
+        p.write("foo.py", "# print(\"old\")\nprint(\"live\")\n");
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC12 Commented out code"));
+        assert_eq!(p.read("foo.py"), "print(\"live\")\n");
+    }
+
+    #[test]
+    fn removes_an_inline_comment_but_keeps_its_code() {
+        let p = Project::new();
+        p.write("foo.py", "value = 1  # print(\"old\")\nprint(value)\n");
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC12 Commented out code"));
+        assert_eq!(p.read("foo.py"), "value = 1\nprint(value)\n");
+    }
+
+    #[test]
+    fn ignores_type_directives_and_noqa() {
+        let p = Project::new();
+        p.write(
+            "foo.py",
+            "# type: ignore\n# print(\"old\")  # noqa: DC12\nprint(\"live\")\n",
+        );
+        assert_eq!(p.run(&["foo.py", "--no-color"]), None);
     }
 }
 
@@ -162,4 +230,65 @@ fn all_unused_names_on_one_line_are_removed() {
     p2.write("mod.py", "import os, sys\nprint(sys.path)\n");
     p2.run(&["mod.py", "--no-color", "--fix"]);
     assert_eq!(p2.read("mod.py"), "import sys\nprint(sys.path)\n");
+}
+
+/// `--fix` must leave valid Python. Each case below produced a syntax error
+/// before the upstream fixes were ported (or, for the last few, in upstream
+/// too).
+mod fix_keeps_valid_python {
+    use super::*;
+
+    fn fix(src: &str) -> String {
+        let p = Project::new();
+        p.write("foo.py", src);
+        p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        p.read("foo.py")
+    }
+
+    #[test]
+    fn multi_line_assignment_is_removed_whole() {
+        let fixed = fix("unused = [\n    1,\n    2,\n]\nused = 1\nprint(used)\n");
+        assert_eq!(fixed, "used = 1\nprint(used)\n");
+    }
+
+    #[test]
+    fn unused_names_leave_a_valid_parenthesized_import() {
+        let fixed = fix("from os import (\n    path,\n    sep,\n    getcwd,\n)\nprint(sep)\n");
+        assert_eq!(fixed, "from os import (\n    sep\n)\nprint(sep)\n");
+    }
+
+    #[test]
+    fn semicolon_separated_import_is_removed_with_its_comment() {
+        let fixed = fix("import sys, json; import re  # comment\nprint(json)\n");
+        assert_eq!(fixed, "import json\nprint(json)\n");
+    }
+
+    #[test]
+    fn annotated_and_augmented_assignments_are_removed_whole() {
+        let fixed = fix("class A:\n    count: int\n    label: str = \"x\"\n\n\nA\n");
+        assert_eq!(fixed, "class A:\n    pass\n\n\nA\n");
+
+        let fixed = fix("def f():\n    total = 0\n    total += 1\n    return 1\n\n\nf()\n");
+        assert_eq!(fixed, "def f():\n    return 1\n\n\nf()\n");
+    }
+
+    #[test]
+    fn emptied_class_body_before_a_removed_top_level_class_gets_an_indented_pass() {
+        let src = "class Kept:\n    def unused(self):\n        pass\n\n\nclass Unused:\n    pass\n\n\nKept\n";
+        let fixed = fix(src);
+        assert_eq!(fixed, "class Kept:\n    pass\n\n\nKept\n");
+    }
+}
+
+mod dry_run_never_touches_disk {
+    use super::*;
+
+    #[test]
+    fn a_file_dry_would_empty_is_shown_not_deleted() {
+        let p = Project::new();
+        p.write("foo.py", "def unused():\n    pass\n");
+        let result = p.run(&["foo.py", "--no-color", "--dry"]).unwrap();
+        assert!(result.contains("-def unused():"));
+        assert!(p.exists("foo.py"));
+    }
 }

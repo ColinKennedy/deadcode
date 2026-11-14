@@ -1,4 +1,5 @@
-from typing import List, Optional
+from typing import NamedTuple
+import logging
 import sys
 
 from deadcode import __version__
@@ -9,48 +10,58 @@ from deadcode.actions.parse_arguments import parse_arguments
 from deadcode.actions.get_unused_names_error_message import (
     get_unused_names_error_message,
 )
+from deadcode.utils.print_safely import print_safely
 
 
-def main(
-    command_line_args: Optional[List[str]] = None,
-) -> Optional[str]:
-    if command_line_args and '--version' in command_line_args or '--version' in sys.argv:
-        return __version__
+class RunResult(NamedTuple):
+    message: str | None
+    exit_status: int
+
+
+VERSION_OPTIONS = ('--version', '-V')
+
+
+def run(
+    command_line_args: list[str] | None = None,
+) -> RunResult:
+    version_requested = any(option in sys.argv for option in VERSION_OPTIONS) or (
+        command_line_args is not None and any(option in command_line_args for option in VERSION_OPTIONS)
+    )
+    if version_requested:
+        return RunResult(__version__, 0)
 
     args = parse_arguments(command_line_args)
+    if args.verbose:
+        logging.basicConfig(level=logging.INFO)
 
     filenames = find_python_filenames(args=args)
 
-    # TODO: rename unused_names to unused_code_items
-    unused_names = find_unused_names(filenames=filenames, args=args)
+    unused_code_items = find_unused_names(filenames=filenames, args=args)
 
     file_diff = None
-    if (args.fix or args.dry) and unused_names:
-        file_diff = fix_or_show_unused_code(unused_names, args=args)
+    if (args.fix or args.dry) and unused_code_items:
+        file_diff = fix_or_show_unused_code(unused_code_items, args=args)
 
-    if (error_message := get_unused_names_error_message(unused_names, args=args)) is not None:
-        return error_message + ('\n\n' + file_diff if file_diff else '')
+    if (error_message := get_unused_names_error_message(unused_code_items, args=args)) is not None:
+        return RunResult(error_message + ('\n\n' + file_diff if file_diff else ''), 1)
 
     if not args.count and not args.quiet:
-        try:
-            print('\033[1mWell done!\033[0m ✨ 🚀 ✨')
-        except UnicodeEncodeError:
-            # Some terminals (e.g. Windows' default cp1252 console codepage) cannot
-            # encode emoji. Fall back to a plain message rather than crashing.
-            print('\033[1mWell done!\033[0m')
-    return None
+        print_safely('Well done! ✨ 🚀 ✨' if args.no_color else '\033[1mWell done!\033[0m ✨ 🚀 ✨')
+    return RunResult(None, 0)
 
 
-def print_main() -> None:
-    is_version_request = '--version' in sys.argv
+def main(  # noqa: DC02
+    command_line_args: list[str] | None = None,
+) -> str | None:
+    return run(command_line_args).message
 
-    result = main()
-    if result:
-        print(result)
 
-    if not is_version_request and result is not None:
-        sys.exit(1)
+def print_main(command_line_args: list[str] | None = None) -> int:
+    result = run(command_line_args)
+    if result.message:
+        print_safely(result.message)
+    return result.exit_status
 
 
 if __name__ == '__main__':
-    print_main()
+    sys.exit(print_main())

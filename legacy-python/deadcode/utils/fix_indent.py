@@ -1,10 +1,10 @@
 import sys
-from typing import Optional, TypeVar
+from typing import TypeVar
 
-_T = TypeVar('_T')
+T = TypeVar('T')
 
 
-def fix_indent(doc: _T) -> Optional[_T]:
+def fix_indent(doc: T) -> T | None:
     """Finds indentation of a first line and removes it from all following lines.
 
     Implemented based on inspect.cleandoc by keeping trailing lines.
@@ -12,7 +12,7 @@ def fix_indent(doc: _T) -> Optional[_T]:
     if isinstance(doc, bytes):
         try:
             byte_lines = doc.expandtabs().split(b'\n')
-        except UnicodeError:
+        except UnicodeError:  # pragma: no cover
             return None
         else:
             # Find minimum indentation of any non-blank lines after first line.
@@ -29,10 +29,6 @@ def fix_indent(doc: _T) -> Optional[_T]:
                 for i in range(1, len(byte_lines)):
                     byte_lines[i] = byte_lines[i][margin:]
 
-            ## Do not remove trailing lines
-            # while lines and not lines[-1]:
-            #     lines.pop()
-
             ## Remove any leading blank lines.
             while byte_lines and not byte_lines[0]:
                 byte_lines.pop(0)
@@ -41,7 +37,7 @@ def fix_indent(doc: _T) -> Optional[_T]:
     if isinstance(doc, str):
         try:
             lines = doc.expandtabs().split('\n')
-        except UnicodeError:
+        except UnicodeError:  # pragma: no cover
             return None
         else:
             # Find minimum indentation of any non-blank lines after first line.
@@ -57,10 +53,6 @@ def fix_indent(doc: _T) -> Optional[_T]:
             if margin < sys.maxsize:
                 for i in range(1, len(lines)):
                     lines[i] = lines[i][margin:]
-
-            ## Do not remove trailing lines
-            # while lines and not lines[-1]:
-            #     lines.pop()
 
             ## Remove any leading blank lines.
             while lines and not lines[0]:

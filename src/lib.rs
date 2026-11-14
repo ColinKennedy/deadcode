@@ -14,6 +14,7 @@ pub mod utils {
 pub mod actions {
     pub mod find_python_filenames;
     pub mod fix_or_show_unused_code;
+    pub mod get_unused_import_parts;
     pub mod get_unused_names_error_message;
     pub mod merge_overlapping_file_parts;
     pub mod parse_abstract_syntax_tree;
