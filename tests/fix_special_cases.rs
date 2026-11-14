@@ -81,6 +81,32 @@ mod unreachable_code_is_not_removed {
     }
 }
 
+mod unreachable_code_after_terminal_statement {
+    use super::*;
+
+    #[test]
+    fn reports_and_removes_the_remaining_statement_list_suffix() {
+        let p = Project::new();
+        p.write(
+            "foo.py",
+            "def used():\n    return 1\n    print(\"unreachable\")\n\nused()\n",
+        );
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC13 unreachable code after 'return'"));
+        assert_eq!(p.read("foo.py"), "def used():\n    return 1\nused()\n");
+    }
+
+    #[test]
+    fn noqa_suppresses_the_finding() {
+        let p = Project::new();
+        p.write(
+            "foo.py",
+            "def used():\n    return 1\n    print(\"unreachable\")  # noqa: DC13\n\nused()\n",
+        );
+        assert_eq!(p.run(&["foo.py", "--no-color"]), None);
+    }
+}
+
 /// Regression: removing every name from a parenthesized multi-import
 /// statement must delete the whole statement, not leave `from file1 import (`
 /// / `)` behind. The Python original left the stub (`# TODO: empty imports

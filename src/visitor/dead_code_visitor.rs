@@ -5,16 +5,6 @@
 //! - No generic `ast.iter_fields`-style reflection: an exhaustive `match`
 //!   over `ruff_python_ast`'s `Stmt`/`Expr` enums, monomorphized, no dynamic
 //!   dispatch.
-//! - `unreachable_code` (DC09) tracking is NOT implemented: tracing
-//!   `get_unused_code_items()` in the Python source shows that collection is
-//!   computed but explicitly excluded from the output
-//!   (`# TODO: removal of unreachable_code has a lot of edge cases`), and no
-//!   test suppresses or asserts on it being reported. It has zero effect on
-//!   any observable behavior, so porting it would just be dead weight.
-//! - `ignore_decorators` (the `--ignore-*-if-decorated-with` flags) is a
-//!   confirmed no-op in the Python original (hardcoded to an empty list in
-//!   `__init__`, see `FOLLOWUP.local.md`) — preserved as a no-op here too,
-//!   not "fixed", for exact parity.
 //! - `NestedScope` only tracks classes (see `utils/nested_scopes.rs` for why
 //!   that's provably behavior-preserving), so there's no `mark_as_used`/
 //!   `number_of_uses` machinery here at all.
@@ -83,6 +73,7 @@ pub struct DeadCodeVisitor<'a> {
     defined_props: Vec<CodeItem>,
     defined_vars: Vec<CodeItem>,
     pub unused_file: Vec<CodeItem>,
+    unreachable_code: Vec<CodeItem>,
 
     /// Files that could not be parsed and were therefore skipped entirely.
     ///
@@ -194,6 +185,7 @@ impl<'a> DeadCodeVisitor<'a> {
             defined_props: Vec::new(),
             defined_vars: Vec::new(),
             unused_file: Vec::new(),
+            unreachable_code: Vec::new(),
             parse_failures: Vec::new(),
             used_names: HashSet::new(),
             filename: PathBuf::new(),
@@ -247,9 +239,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 let parsed = parse_abstract_syntax_tree(&self.source);
                 match parsed {
                     Ok(module) => {
-                        for stmt in &module {
-                            self.walk_stmt(stmt);
-                        }
+                        self.walk_stmt_list(&module);
                     }
                     Err(_) => {
                         // Deliberately NOT gated on `--count`/`--quiet`, unlike
@@ -289,7 +279,7 @@ impl<'a> DeadCodeVisitor<'a> {
         unused.extend(unused_of(&self.defined_methods, &self.used_names));
         unused.extend(unused_of(&self.defined_props, &self.used_names));
         unused.extend(unused_of(&self.defined_vars, &self.used_names));
-        // NOT self.unreachable_code -- see module doc comment.
+        unused.extend(self.unreachable_code.iter().cloned());
         unused.extend(self.unused_file.iter().cloned());
 
         unused.sort_by(|a, b| {
@@ -304,6 +294,63 @@ impl<'a> DeadCodeVisitor<'a> {
 
     fn is_directly_in_class_body(&self) -> bool {
         self.scope_kinds.last() == Some(&ScopeKind::Class)
+    }
+
+    /// Walk a statement list while reporting the contiguous suffix that can
+    /// never execute after a terminal statement. This mirrors the upstream
+    /// visitor's list hook, so it applies to every nested statement body.
+    fn walk_stmt_list(&mut self, statements: &[Stmt]) {
+        for (index, statement) in statements.iter().enumerate() {
+            if matches!(
+                statement,
+                Stmt::Break(_) | Stmt::Continue(_) | Stmt::Raise(_) | Stmt::Return(_)
+            ) {
+                let Some(first_unreachable) = statements.get(index + 1) else {
+                    continue;
+                };
+                let terminal_name = match statement {
+                    Stmt::Break(_) => "break",
+                    Stmt::Continue(_) => "continue",
+                    Stmt::Raise(_) => "raise",
+                    Stmt::Return(_) => "return",
+                    _ => unreachable!(),
+                };
+                let first_range = first_unreachable.range();
+                let last_range = statements.last().expect("non-empty statement list").range();
+                let (line, column) = self.line_index.line_col(first_range.start());
+                let (last_line, end_column) = self.line_index.line_col(last_range.end());
+                let ignored = self.should_ignore_new_definitions
+                    || fnmatch::match_any(terminal_name, &self.args.ignore_names, true)
+                    || fnmatch::match_any(
+                        &path_as_posix(&self.filename),
+                        &self.args.ignore_names_in_files,
+                        true,
+                    )
+                    || noqa::ignore_line(&self.noqa_lines, line as u32, "DC13");
+                if !ignored {
+                    self.unreachable_code.push(CodeItem::new(
+                        terminal_name.to_string(),
+                        UnusedCodeType::UnreachableCode,
+                        self.filename.clone(),
+                        vec![Part::new(
+                            line as u32,
+                            last_line as u32,
+                            column as u32,
+                            end_column as u32,
+                        )],
+                        (!self.scope_parts.is_empty()).then(|| self.scope_parts.join(".")),
+                        None,
+                        Some(line as u32),
+                        Some(column as u32),
+                        format!("unreachable code after '{terminal_name}'"),
+                    ));
+                }
+                break;
+            }
+        }
+        for statement in statements {
+            self.walk_stmt(statement);
+        }
     }
 
     /// Port of `get_inherits_from`, restricted (like the caller already
@@ -829,9 +876,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 for kw in c.keywords() {
                     self.walk_expr(&kw.value);
                 }
-                for s in &c.body {
-                    self.walk_stmt(s);
-                }
+                self.walk_stmt_list(&c.body);
 
                 if should_turn_off {
                     self.should_ignore_new_definitions = false;
@@ -889,9 +934,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 if let Some(returns) = &f.returns {
                     self.walk_expr(returns);
                 }
-                for s in &f.body {
-                    self.walk_stmt(s);
-                }
+                self.walk_stmt_list(&f.body);
                 if should_turn_off {
                     self.should_ignore_new_definitions = false;
                 }
@@ -947,27 +990,17 @@ impl<'a> DeadCodeVisitor<'a> {
             Stmt::For(s) => {
                 self.walk_expr(&s.target);
                 self.walk_expr(&s.iter);
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
-                for st in &s.orelse {
-                    self.walk_stmt(st);
-                }
+                self.walk_stmt_list(&s.body);
+                self.walk_stmt_list(&s.orelse);
             }
             Stmt::While(s) => {
                 self.walk_expr(&s.test);
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
-                for st in &s.orelse {
-                    self.walk_stmt(st);
-                }
+                self.walk_stmt_list(&s.body);
+                self.walk_stmt_list(&s.orelse);
             }
             Stmt::If(s) => {
                 self.walk_expr(&s.test);
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
+                self.walk_stmt_list(&s.body);
                 // Python nests each `elif` as another `If` inside `orelse`,
                 // so recursion reached every branch's test and body. ruff
                 // flattens the whole chain into one clause list instead
@@ -977,9 +1010,7 @@ impl<'a> DeadCodeVisitor<'a> {
                     if let Some(test) = &clause.test {
                         self.walk_expr(test);
                     }
-                    for st in &clause.body {
-                        self.walk_stmt(st);
-                    }
+                    self.walk_stmt_list(&clause.body);
                 }
             }
             // `with` and `async with` (merged in ruff behind `is_async`).
@@ -990,9 +1021,7 @@ impl<'a> DeadCodeVisitor<'a> {
                         self.walk_expr(v);
                     }
                 }
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
+                self.walk_stmt_list(&s.body);
             }
             Stmt::Match(s) => {
                 self.walk_expr(&s.subject);
@@ -1001,9 +1030,7 @@ impl<'a> DeadCodeVisitor<'a> {
                     if let Some(guard) = &case.guard {
                         self.walk_expr(guard);
                     }
-                    for st in &case.body {
-                        self.walk_stmt(st);
-                    }
+                    self.walk_stmt_list(&case.body);
                 }
             }
             Stmt::Raise(s) => {
@@ -1018,24 +1045,16 @@ impl<'a> DeadCodeVisitor<'a> {
             // `is_star`). Also covers PEP 758's parenthesis-free
             // `except A, B:` form, which parses into the same handler shape.
             Stmt::Try(s) => {
-                for st in &s.body {
-                    self.walk_stmt(st);
-                }
+                self.walk_stmt_list(&s.body);
                 for handler in &s.handlers {
                     let ruff_python_ast::ExceptHandler::ExceptHandler(h) = handler;
                     if let Some(t) = &h.type_ {
                         self.walk_expr(t);
                     }
-                    for st in &h.body {
-                        self.walk_stmt(st);
-                    }
+                    self.walk_stmt_list(&h.body);
                 }
-                for st in &s.orelse {
-                    self.walk_stmt(st);
-                }
-                for st in &s.finalbody {
-                    self.walk_stmt(st);
-                }
+                self.walk_stmt_list(&s.orelse);
+                self.walk_stmt_list(&s.finalbody);
             }
             Stmt::Assert(s) => {
                 self.walk_expr(&s.test);
