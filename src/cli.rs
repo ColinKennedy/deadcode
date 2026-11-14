@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::actions::find_python_filenames::find_python_filenames;
+use crate::actions::find_python_filenames::find_python_filenames_with_references;
 use crate::actions::fix_or_show_unused_code::fix_or_show_unused_code;
 use crate::actions::get_unused_names_error_message::get_unused_names_error_message;
 use crate::actions::parse_arguments::parse_arguments_with_config;
@@ -59,17 +59,27 @@ pub fn main_with_config(
     let args = parse_arguments_with_config(&argv, pyproject_path)?;
 
     let tach_index = load_tach_index(&args.tach_config);
-    let filenames = find_python_filenames(&args, &tach_index);
+    let filenames = find_python_filenames_with_references(&args, &tach_index);
 
     let mut visitor = DeadCodeVisitor::new(&args, &tach_index);
-    visitor.visit_files(&filenames);
-    let unused_names = visitor.get_unused_code_items();
+    visitor.visit_files_with_parse_failure_reporting(&filenames.analysis, |path| {
+        filenames.is_reportable(path)
+    });
+    let unused_names = visitor
+        .get_unused_code_items()
+        .into_iter()
+        .filter(|item| filenames.is_reportable(&item.filename))
+        .collect::<Vec<_>>();
 
     // Files that couldn't be parsed contribute no findings, so without this a
     // run over unparseable source looks exactly like a clean one. Summarize on
     // stderr (each file already logged itself there during the walk), and
     // below, fail the run even when nothing unused was found.
-    let parse_failure_count = visitor.parse_failures.len();
+    let parse_failure_count = visitor
+        .parse_failures
+        .iter()
+        .filter(|path| filenames.is_reportable(path))
+        .count();
     if parse_failure_count > 0 {
         eprintln!(
             "{parse_failure_count} file{} could not be parsed.",

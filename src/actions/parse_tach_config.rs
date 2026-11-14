@@ -66,6 +66,17 @@ impl TachIndex {
         TachIndex { configs }
     }
 
+    /// All source roots declared by the loaded Tach projects.
+    ///
+    /// Callers may use these as analysis context. Whether findings from a
+    /// source root are reportable remains a separate concern determined by
+    /// the paths explicitly passed on the command line.
+    pub(crate) fn source_roots(&self) -> impl Iterator<Item = &Path> {
+        self.configs
+            .iter()
+            .flat_map(|config| config.source_roots.iter().map(PathBuf::as_path))
+    }
+
     /// True if `path` belongs to a tach project (is its project root or
     /// nested under it) but falls outside every one of that project's
     /// `source_roots`, and outside them for every other tach project it

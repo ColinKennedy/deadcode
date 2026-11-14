@@ -224,3 +224,93 @@ fn multiple_tach_config_values_are_merged() {
     ]);
     assert_eq!(result, None);
 }
+
+#[test]
+fn external_source_root_is_analysis_context_but_not_reportable() {
+    let p = Project::new();
+    p.write(
+        "primary/tach.toml",
+        "source_roots = [\"src\", \"../reference/src\"]\n",
+    );
+    p.write(
+        "reference/src/base.py",
+        "class Base:\n    def describe(self):\n        return self.get_description()\n\ndef unused_reference():\n    return 1\n",
+    );
+    p.write(
+        "primary/src/implementation.py",
+        "from base import Base\n\nclass Implementation(Base):\n    def get_description(self):\n        return 'primary'\n\nImplementation()\n\ndef unused_primary():\n    return 1\n",
+    );
+
+    let primary = p.path_str("primary");
+    let tach = p.path_str("primary/tach.toml");
+    let result = p
+        .run(&[&primary, "--tach-config", &tach, "--no-color"])
+        .unwrap();
+
+    assert!(result.contains("unused_primary"));
+    assert!(!result.contains("get_description"));
+    assert!(!result.contains("unused_reference"));
+}
+
+#[test]
+fn reference_only_findings_do_not_fail_the_run() {
+    let p = Project::new();
+    p.write(
+        "primary/tach.toml",
+        "source_roots = [\"src\", \"../reference/src\"]\n",
+    );
+    p.write(
+        "reference/src/module.py",
+        "def unused_reference():\n    return 1\n",
+    );
+    p.write("primary/src/module.py", "value = 1\nprint(value)\n");
+
+    let primary = p.path_str("primary");
+    let tach = p.path_str("primary/tach.toml");
+    let result = p.run(&[&primary, "--tach-config", &tach, "--no-color"]);
+
+    assert_eq!(result, None);
+}
+
+#[test]
+fn count_and_fix_apply_only_to_explicit_cli_paths() {
+    let p = Project::new();
+    p.write(
+        "primary/tach.toml",
+        "source_roots = [\"src\", \"../reference/src\"]\n",
+    );
+    let reference_source = "def unused_reference():\n    return 1\n";
+    p.write("reference/src/module.py", reference_source);
+    p.write(
+        "primary/src/module.py",
+        "live_value = 1\nprint(live_value)\n\ndef unused_primary():\n    return 1\n",
+    );
+
+    let primary = p.path_str("primary");
+    let tach = p.path_str("primary/tach.toml");
+    assert_eq!(
+        p.run(&[&primary, "--tach-config", &tach, "--count"]),
+        Some("1".to_string())
+    );
+
+    p.run(&[&primary, "--tach-config", &tach, "--fix", "--no-color"]);
+    assert!(!p.read("primary/src/module.py").contains("unused_primary"));
+    assert_eq!(p.read("reference/src/module.py"), reference_source);
+}
+
+#[test]
+fn parse_failure_in_reference_source_root_does_not_fail_the_run() {
+    let p = Project::new();
+    p.write(
+        "primary/tach.toml",
+        "source_roots = [\"src\", \"../reference/src\"]\n",
+    );
+    p.write("reference/src/broken.py", "def broken(:\n");
+    p.write("primary/src/module.py", "value = 1\nprint(value)\n");
+
+    let primary = p.path_str("primary");
+    let tach = p.path_str("primary/tach.toml");
+    let result = p.run(&[&primary, "--tach-config", &tach, "--no-color"]);
+
+    assert_eq!(result, None);
+}
