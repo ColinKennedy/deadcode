@@ -1,10 +1,8 @@
-_DISTRIBUTION_NAME = 'lapsed'  # PyPI project name; differs from this importable package name ("deadcode").
-
 try:
     import importlib.metadata
 
-    __version__ = importlib.metadata.version(_DISTRIBUTION_NAME)
-except ImportError:
+    __version__ = importlib.metadata.version(__package__ or __name__)
+except ImportError:  # pragma: no cover
     import importlib_metadata
 
-    __version__ = importlib_metadata.version(_DISTRIBUTION_NAME)
+    __version__ = importlib_metadata.version(__package__ or __name__)

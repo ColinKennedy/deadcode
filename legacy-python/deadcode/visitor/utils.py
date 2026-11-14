@@ -1,8 +1,8 @@
 import ast
-from typing import Union
 
 from deadcode.visitor.code_item import CodeItem
 from deadcode.constants import UnusedCodeType
+from deadcode.utils.print_safely import print_safely
 
 
 def _safe_eval(node: ast.AST, default: bool) -> bool:
@@ -43,24 +43,46 @@ def condition_is_always_true(condition: ast.AST) -> bool:
     return _safe_eval(condition, False)
 
 
-# def format_path(path: pathlib.Path) -> pathlib.Path:
-#     try:
-#         return path.relative_to(pathlib.Path.cwd())
-#     except ValueError:
-#         # Path is not below the current directory.
-#         return path
+def collect_names_from_annotation_strings(annotation: ast.AST | None, max_depth: int = 10) -> set[str]:
+    """Return names referenced by strings nested in an annotation."""
+    if annotation is None or max_depth <= 0:
+        return set()
+
+    names: set[str] = set()
+    for node in ast.walk(annotation):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        try:
+            parsed: ast.AST = ast.parse(node.value, filename='<annotation>', mode='eval')
+        except SyntaxError:
+            continue
+        names.update(
+            inner.id
+            for inner in ast.walk(parsed)
+            if isinstance(inner, ast.Name) and isinstance(inner.ctx, (ast.Load, ast.Del))
+        )
+        names |= collect_names_from_annotation_strings(parsed, max_depth - 1)
+
+    return names
 
 
-def get_decorator_name(decorator: Union[ast.Call, ast.Attribute, ast.Name]) -> str:
+def get_decorator_name(decorator: ast.AST) -> str:
     if isinstance(decorator, ast.Call):
-        decorator = decorator.func  # type: ignore
-    parts = []
-    while isinstance(decorator, ast.Attribute):
-        parts.append(decorator.attr)
-        decorator = decorator.value  # type: ignore
+        return get_decorator_name(decorator.func)
     if isinstance(decorator, ast.Name):
-        parts.append(decorator.id)
-    return '@' + '.'.join(reversed(parts))
+        return '@' + decorator.id
+    if isinstance(decorator, ast.Attribute):
+        return get_decorator_name(decorator.value) + '.' + decorator.attr
+    return '@' + ast.unparse(decorator)
+
+
+def get_base_class_names(base: ast.AST) -> list[str]:
+    """Return candidate class names for a class base expression."""
+    if isinstance(base, ast.Name):
+        return [base.id]
+    if isinstance(base, ast.Attribute):
+        return list(dict.fromkeys([ast.unparse(base), base.attr]))
+    return []
 
 
 class LoggingList(list):  # type: ignore
@@ -71,7 +93,7 @@ class LoggingList(list):  # type: ignore
 
     def append(self, item: CodeItem) -> None:
         if self._verbose:
-            print(f'define {self.type_} "{item.name}"')
+            print_safely(f'define {self.type_} "{item.name}"')
         super().append(item)
 
 
@@ -83,5 +105,5 @@ class LoggingSet(set):  # type: ignore
 
     def add(self, name: str) -> None:
         if self._verbose:
-            print(f'use {self.type_} "{name}"')
+            print_safely(f'use {self.type_} "{name}"')
         super().add(name)

@@ -1,34 +1,27 @@
 [project]
-# Must match `DISTRIBUTION_NAME` in deadcode/__init__.py, which resolves
-# __version__ through installed package metadata. This said "deadcode" while
-# __init__ looked up "lapsed", so importing the package raised
-# PackageNotFoundError even after a successful install — the PyPI rename
-# updated the root manifest but not this one.
-name = "lapsed"
-version = "2.4.1"
+name = "deadcode"
+version = "2.6.3"
 authors = [
     {name = "Albertas Gimbutas", email = "albertasgim@gmail.com"},
 ]
-description = "Find and remove dead code."
+description = "Find and fix unused Python code using command line."
 readme = "README.md"
 requires-python = ">= 3.10"
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
-    # Kept in sync with PYTHON_VERSIONS in scripts/check.py and the pytest
-    # matrix in .github/workflows/ci.yml -- every version listed here is
-    # actually exercised by CI.
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
 ]
 dependencies = [
-    "tomli>=2.0.1"
+    "tomli>=2.0.1; python_version<'3.11'"
 ]
 
 [project.optional-dependencies]
@@ -38,8 +31,11 @@ test = [
     "mypy",
     "pip-audit",
     "deadcode",
+    "diff-cover",
+    "pre-commit",
     "pytest",
     "pytest-cov",
+    "pytest-xdist",
 ]
 
 [project.scripts]
@@ -79,7 +75,6 @@ ignore = [
     "D213",    # multi line summary second line
     "COM812",  # missing trailing comma
     "ISC001",  # single line implicit string concatenation
-    "ANN101",  # deprecated requirement to annotate self
     "A001",
     "ANN001",
     "ANN002",
@@ -153,12 +148,17 @@ ignore = [
     "W293",
     "W605",
     "UP",
+    "CPY001",  # no copyright notices in source files
+    "FAST001",  # FastAPI rules do not apply to the test fixtures
+    "FAST002",
+    "PLR0917",  # consistent with PLR0913
+    "RUF102",  # DC noqa codes are intentionally not ruff codes
+    "SIM905",  # consistent with ISC001
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
     "S101",  # allow assert and no docs in tests
-    "PT009",
     "ANN201",
     "D",
 ]
@@ -173,6 +173,10 @@ color_output = true
 show_error_codes = true
 warn_return_any = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["importlib_metadata", "tomli"]
+ignore_missing_imports = true
 
 [tool.deadcode]
 ignore_names = [
@@ -193,10 +197,7 @@ ignore_names = [
     "show",
     "visit_*",
 ]
-ignore_names_in_files = [
-    "deadcode/utils/base_test_case.py"
-]
-exclude = ["tests"]
+exclude = ["tests", "docs", "docs/*"]
 
 [tool.pytest.ini_options]
-addopts = "--cov=. --no-cov-on-fail --cov-fail-under=88.0"
+addopts = "--cov=deadcode --no-cov-on-fail --cov-fail-under=100.0"
