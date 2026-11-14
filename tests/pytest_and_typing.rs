@@ -235,3 +235,25 @@ mod interface_markers {
         assert_eq!(p.run(&["myapp/foo.py", "--no-color"]), None);
     }
 }
+
+mod quoted_annotations {
+    use super::*;
+
+    #[test]
+    fn names_inside_string_annotations_are_used() {
+        let p = Project::new();
+        p.write(
+            "foo.py",
+            "from typing import TYPE_CHECKING\n\
+             if TYPE_CHECKING:\n    \
+             from collections import OrderedDict, deque\n    \
+             from decimal import Decimal\n    \
+             from fractions import Fraction\n\n\
+             def f(x: \"OrderedDict[str, int]\", *args: \"deque\") -> \"list['Decimal']\":\n    \
+             value: \"Fraction\" = x\n    \
+             return [value, args]\n\n\
+             f(1)\n",
+        );
+        assert_eq!(p.run(&["foo.py", "--no-color"]), None);
+    }
+}

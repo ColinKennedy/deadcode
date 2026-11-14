@@ -109,6 +109,52 @@ pub struct DeadCodeVisitor<'a> {
     assignment_removal_range: Option<TextRange>,
 }
 
+/// Names loaded by the expressions inside string literals nested in
+/// `annotation`, following strings inside those strings up to `depth` levels.
+/// Mirrors upstream's `collect_names_from_annotation_strings`.
+fn annotation_string_names(annotation: &Expr, depth: u32) -> HashSet<String> {
+    use ruff_python_ast::visitor::{walk_expr, Visitor};
+
+    #[derive(Default)]
+    struct Collector {
+        strings: Vec<String>,
+        names: HashSet<String>,
+    }
+
+    impl<'a> Visitor<'a> for Collector {
+        fn visit_expr(&mut self, expr: &'a Expr) {
+            match expr {
+                Expr::StringLiteral(literal) => {
+                    self.strings.push(literal.value.to_str().to_string())
+                }
+                Expr::Name(name) if matches!(name.ctx, ExprContext::Load | ExprContext::Del) => {
+                    self.names.insert(name.id.to_string());
+                }
+                _ => {}
+            }
+            walk_expr(self, expr);
+        }
+    }
+
+    let mut outer = Collector::default();
+    outer.visit_expr(annotation);
+    let mut names = HashSet::new();
+    if depth == 0 {
+        return names;
+    }
+    for string in outer.strings {
+        let Ok(parsed) = ruff_python_parser::parse_expression(&string) else {
+            continue;
+        };
+        let expression = &parsed.syntax().body;
+        let mut inner = Collector::default();
+        inner.visit_expr(expression);
+        names.extend(inner.names);
+        names.extend(annotation_string_names(expression, depth - 1));
+    }
+    names
+}
+
 /// Extracts a `str` constant value, mirroring the several
 /// `isinstance(x, ast.Str)` checks in the Python original.
 ///
@@ -1354,7 +1400,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 }
                 self.walk_parameters(&f.parameters);
                 if let Some(returns) = &f.returns {
-                    self.walk_expr(returns);
+                    self.walk_annotation(returns);
                 }
                 self.walk_stmt_list(&f.body);
                 if should_turn_off {
@@ -1389,7 +1435,7 @@ impl<'a> DeadCodeVisitor<'a> {
             }
             Stmt::AnnAssign(a) => {
                 self.walk_assignment_target(&a.target, a.range, true, true);
-                self.walk_expr(&a.annotation);
+                self.walk_annotation(&a.annotation);
                 if let Some(v) = &a.value {
                     self.walk_expr(v);
                 }
@@ -1546,7 +1592,7 @@ impl<'a> DeadCodeVisitor<'a> {
             .chain(parameters.kwonlyargs.iter())
         {
             if let Some(annotation) = &a.parameter.annotation {
-                self.walk_expr(annotation);
+                self.walk_annotation(annotation);
             }
             if let Some(default) = &a.default {
                 self.walk_expr(default);
@@ -1554,13 +1600,22 @@ impl<'a> DeadCodeVisitor<'a> {
         }
         if let Some(vararg) = &parameters.vararg {
             if let Some(annotation) = &vararg.annotation {
-                self.walk_expr(annotation);
+                self.walk_annotation(annotation);
             }
         }
         if let Some(kwarg) = &parameters.kwarg {
             if let Some(annotation) = &kwarg.annotation {
-                self.walk_expr(annotation);
+                self.walk_annotation(annotation);
             }
+        }
+    }
+
+    /// Walks a type annotation, also counting names inside quoted (forward
+    /// reference) annotations such as `"OrderedDict[str, int]"` as used.
+    fn walk_annotation(&mut self, annotation: &Expr) {
+        self.walk_expr(annotation);
+        for name in annotation_string_names(annotation, 10) {
+            self.add_used_name(&name);
         }
     }
 

@@ -24,8 +24,6 @@ legacy-fastapi_features dry  # phases 2-3: DC06 naming, cascading
 legacy-fastapi_features report  # phases 2-3: DC06 naming, cascading
 legacy-functions dry  # phase 4: unified-diff hunk grouping differs (similar vs difflib)
 legacy-subdir dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
-quoted dry  # phase 2: names inside string annotations
-quoted report  # phase 2: names inside string annotations
 samename dry  # phase 3: same-named definitions in different files (upstream #122)
 samename report  # phase 3: same-named definitions in different files (upstream #122)
 unicode dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
