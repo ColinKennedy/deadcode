@@ -92,9 +92,22 @@ jobs:
           name: wheels-macos-${{ matrix.target }}
           path: dist/*.whl
 
-  # Publishing to real PyPI is a deliberate, manual, credentialed step — not
-  # automated here. This job just proves every wheel actually installs and
-  # runs on its target platform.
+  sdist:
+    name: source distribution
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # Every wheel installs and runs on its target platform.
   smoke-test:
     name: install & smoke test (${{ matrix.os }})
     needs: [linux, windows, macos]
@@ -158,3 +171,42 @@ jobs:
       # index makes that failure loud rather than silent.
       - run: pip install --no-index --find-links dist lapsed
       - run: deadcode --version
+
+  # Pushing a `v*` tag publishes to PyPI once every wheel built and smoke-tested.
+  # Uses PyPI trusted publishing (OIDC), so there is no token in the repository:
+  # register this workflow as a trusted publisher for `lapsed` on PyPI
+  # (owner ColinKennedy, repo deadcode, workflow wheels.yml, environment pypi).
+  publish:
+    name: publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [sdist, smoke-test]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/lapsed/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # A tag that disagrees with Cargo.toml would upload the wrong version.
+      - name: Check the tag matches the package version
+        shell: bash
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $actual"
+            exit 1
+          fi
+          ls -l dist
+          if ls dist | grep -v -E "^lapsed-$expected[-.]" ; then
+            echo "::error::dist holds files that are not version $expected"
+            exit 1
+          fi
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
