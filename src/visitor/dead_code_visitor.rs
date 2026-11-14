@@ -9,7 +9,7 @@
 //!   that's provably behavior-preserving), so there's no `mark_as_used`/
 //!   `number_of_uses` machinery here at all.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use ruff_python_ast::{
@@ -99,6 +99,8 @@ pub struct DeadCodeVisitor<'a> {
     /// `def`/`class` keyword offset of a decorated definition — see
     /// `definition_keyword_start`.
     source: String,
+    /// Absolute import targets keyed by the local spelling used in this file.
+    qualified_imports: HashMap<String, String>,
 }
 
 /// Extracts a `str` constant value, mirroring the several
@@ -241,6 +243,7 @@ impl<'a> DeadCodeVisitor<'a> {
             scopes: NestedScope::new(),
             line_index: LineIndex::new(""),
             source: String::new(),
+            qualified_imports: HashMap::new(),
         }
     }
 
@@ -270,6 +273,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 .unwrap_or(&filename);
             self.scope_parts = vec![module_name.to_string()];
             self.scope_kinds = Vec::new();
+            self.qualified_imports.clear();
 
             let is_dunder_file = filename.starts_with("__") && filename.ends_with("__.py");
             let content_str = String::from_utf8_lossy(&file_content).into_owned();
@@ -544,10 +548,7 @@ impl<'a> DeadCodeVisitor<'a> {
         }
         let base_names: Vec<String> = bases
             .iter()
-            .filter_map(|b| match b {
-                Expr::Name(n) => Some(n.id.as_str().to_string()),
-                _ => None,
-            })
+            .flat_map(|base| self.expression_name_candidates(base))
             .collect();
         let mut inherits_from = base_names.clone();
         for base in &base_names {
@@ -556,6 +557,33 @@ impl<'a> DeadCodeVisitor<'a> {
             }
         }
         Some(inherits_from)
+    }
+
+    fn expression_name_candidates(&self, expression: &Expr) -> Vec<String> {
+        fn dotted_name(expression: &Expr) -> Option<String> {
+            match expression {
+                Expr::Name(name) => Some(name.id.as_str().to_string()),
+                Expr::Attribute(attribute) => Some(format!(
+                    "{}.{}",
+                    dotted_name(&attribute.value)?,
+                    attribute.attr
+                )),
+                _ => None,
+            }
+        }
+        let Some(name) = dotted_name(expression) else {
+            return Vec::new();
+        };
+        let mut candidates = vec![name.clone()];
+        let (first, suffix) = name.split_once('.').unwrap_or((&name, ""));
+        if let Some(target) = self.qualified_imports.get(first) {
+            candidates.push(if suffix.is_empty() {
+                target.clone()
+            } else {
+                format!("{target}.{suffix}")
+            });
+        }
+        candidates
     }
 
     /// Returns the offset Python's `ast` would report as a definition's
@@ -724,11 +752,20 @@ impl<'a> DeadCodeVisitor<'a> {
         }
     }
 
-    fn add_aliases(&mut self, names: &[Alias]) {
+    fn add_aliases(&mut self, names: &[Alias], module: Option<&str>) {
         for alias in names {
             let full_name = alias.name.as_str();
             let name = full_name.split('.').next().unwrap_or(full_name);
             let effective_name = alias.asname.as_ref().map_or(name, |a| a.as_str());
+            if let Some(module) = module {
+                if !module.is_empty() {
+                    self.qualified_imports
+                        .insert(effective_name.to_string(), format!("{module}.{full_name}"));
+                }
+            } else {
+                self.qualified_imports
+                    .insert(effective_name.to_string(), full_name.to_string());
+            }
             let ignored = ignore::ignore_import(&self.filename, name);
             self.push_definition(
                 DefinedKind::Import,
@@ -1122,10 +1159,10 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.scope_parts.pop();
                 self.scope_kinds.pop();
             }
-            Stmt::Import(i) => self.add_aliases(&i.names),
+            Stmt::Import(i) => self.add_aliases(&i.names, None),
             Stmt::ImportFrom(i) => {
                 if i.module.as_deref() != Some("__future__") {
-                    self.add_aliases(&i.names);
+                    self.add_aliases(&i.names, i.module.as_deref());
                 }
             }
             Stmt::Assign(a) => {
