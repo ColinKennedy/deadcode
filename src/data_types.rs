@@ -118,7 +118,7 @@ pub struct Args {
     pub verbose: bool,
 
     /// Shows deadcode version (handled upstream of clap parsing — see module doc comment).
-    #[arg(long)]
+    #[arg(short = 'V', long)]
     pub version: bool,
 }
 
