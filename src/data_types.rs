@@ -37,6 +37,10 @@ pub struct Args {
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub exclude: Vec<String>,
 
+    /// Ignores findings with any of the provided rule codes, e.g. DC12.
+    #[arg(long = "ignore-rules", num_args = 0.., action = clap::ArgAction::Append)]
+    pub ignore_rules: Vec<String>,
+
     /// Ignores definition (including name and body) if a name of an expression matches any of the provided ones.
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_definitions: Vec<String>,

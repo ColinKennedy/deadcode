@@ -49,6 +49,7 @@ fn flatten_comma_list(values: &[String]) -> Vec<String> {
 fn flatten_comma_separated(args: &mut Args) {
     args.only = flatten_comma_list(&args.only);
     args.exclude = flatten_comma_list(&args.exclude);
+    args.ignore_rules = flatten_comma_list(&args.ignore_rules);
     args.ignore_definitions = flatten_comma_list(&args.ignore_definitions);
     args.ignore_definitions_if_decorated_with =
         flatten_comma_list(&args.ignore_definitions_if_decorated_with);
@@ -103,6 +104,7 @@ fn merge_pyproject_toml(args: &mut Args, pyproject_path: &Path) {
             "paths" => args.paths.extend(extra),
             "only" => args.only.extend(extra),
             "exclude" => args.exclude.extend(extra),
+            "ignore_rules" => args.ignore_rules.extend(extra),
             "ignore_definitions" => args.ignore_definitions.extend(extra),
             "ignore_definitions_if_decorated_with" => {
                 args.ignore_definitions_if_decorated_with.extend(extra)
@@ -156,6 +158,12 @@ mod tests {
     fn comma_separated_exclude() {
         let args = parse(&[".", "--exclude=tests,venv"]);
         assert_eq!(args.exclude, vec!["tests", "venv"]);
+    }
+
+    #[test]
+    fn ignore_rules_accepts_comma_separated_and_repeated_values() {
+        let args = parse(&[".", "--ignore-rules=DC01,DC12", "--ignore-rules", "DC13"]);
+        assert_eq!(args.ignore_rules, vec!["DC01", "DC12", "DC13"]);
     }
 
     #[test]
@@ -236,6 +244,23 @@ mod tests {
         .unwrap();
         let args = parse_arguments_with_config(&[".".to_string()], &toml_path).unwrap();
         assert_eq!(args.ignore_names, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn pyproject_toml_extends_ignore_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let toml_path = dir.path().join("pyproject.toml");
+        std::fs::write(&toml_path, "[tool.deadcode]\nignore-rules = [\"DC12\"]\n").unwrap();
+        let args = parse_arguments_with_config(
+            &[
+                ".".to_string(),
+                "--ignore-rules".to_string(),
+                "DC01".to_string(),
+            ],
+            &toml_path,
+        )
+        .unwrap();
+        assert_eq!(args.ignore_rules, vec!["DC01", "DC12"]);
     }
 
     #[test]
