@@ -586,6 +586,21 @@ impl<'a> DeadCodeVisitor<'a> {
         candidates
     }
 
+    fn decorator_names(&self, decorators: &[Decorator]) -> Vec<String> {
+        decorators
+            .iter()
+            .flat_map(|decorator| {
+                let mut names = vec![get_decorator_name(&decorator.expression)];
+                names.extend(
+                    self.expression_name_candidates(&decorator.expression)
+                        .into_iter()
+                        .map(|name| format!("@{name}")),
+                );
+                names
+            })
+            .collect()
+    }
+
     /// Returns the offset Python's `ast` would report as a definition's
     /// `lineno`/`col_offset`.
     ///
@@ -660,10 +675,7 @@ impl<'a> DeadCodeVisitor<'a> {
         let ignored = type_specific_ignored
             || fnmatch::match_any(name, &self.args.ignore_names, true)
             || fnmatch::match_many(
-                &decorator_list
-                    .iter()
-                    .map(|decorator| get_decorator_name(&decorator.expression))
-                    .collect::<Vec<_>>(),
+                &self.decorator_names(decorator_list),
                 &self.args.ignore_names_if_decorated_with,
                 true,
             )
@@ -897,10 +909,7 @@ impl<'a> DeadCodeVisitor<'a> {
         start: TextSize,
         end: TextSize,
     ) {
-        let decorator_names: Vec<String> = decorator_list
-            .iter()
-            .map(|d| get_decorator_name(&d.expression))
-            .collect();
+        let decorator_names = self.decorator_names(decorator_list);
         for decorator in decorator_list {
             self.track_usefixtures_mark(&decorator.expression);
         }
@@ -1020,10 +1029,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 let matches_ignore_defs =
                     fnmatch::match_any(c.name.as_str(), &self.args.ignore_definitions, true)
                         || fnmatch::match_many(
-                            &c.decorator_list
-                                .iter()
-                                .map(|decorator| get_decorator_name(&decorator.expression))
-                                .collect::<Vec<_>>(),
+                            &self.decorator_names(&c.decorator_list),
                             &self.args.ignore_definitions_if_decorated_with,
                             true,
                         )
@@ -1072,10 +1078,7 @@ impl<'a> DeadCodeVisitor<'a> {
                     }
                     if !self.should_ignore_new_definitions
                         && fnmatch::match_many(
-                            &c.decorator_list
-                                .iter()
-                                .map(|decorator| get_decorator_name(&decorator.expression))
-                                .collect::<Vec<_>>(),
+                            &self.decorator_names(&c.decorator_list),
                             &self.args.ignore_bodies_if_decorated_with,
                             true,
                         )
@@ -1108,11 +1111,7 @@ impl<'a> DeadCodeVisitor<'a> {
             // byte-identical, and nothing in this visitor branches on
             // asyncness, so collapsing them is behavior-preserving.
             Stmt::FunctionDef(f) => {
-                let decorator_names = f
-                    .decorator_list
-                    .iter()
-                    .map(|decorator| get_decorator_name(&decorator.expression))
-                    .collect::<Vec<_>>();
+                let decorator_names = self.decorator_names(&f.decorator_list);
                 let mut should_turn_off = false;
                 if (fnmatch::match_any(f.name.as_str(), &self.args.ignore_definitions, true)
                     || fnmatch::match_many(
