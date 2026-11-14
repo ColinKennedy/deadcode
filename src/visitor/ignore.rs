@@ -27,7 +27,9 @@ pub const PYTEST_USEFIXTURES_DECORATOR_NAMES: &[&str] = &[
     "@mark.usefixtures",
     "@usefixtures",
 ];
-pub const OVERRIDE_DECORATOR_NAMES: &[&str] = &[
+pub const INTERFACE_DECORATOR_NAMES: &[&str] = &[
+    "@abstractmethod",
+    "@abc.abstractmethod",
     "@typing.override",
     "@typing_extensions.override",
     "@override",
@@ -97,7 +99,7 @@ pub fn ignore_pytest_fixture(filename: &Path, decorator_names: &[String]) -> boo
 /// base's method is what's actually called, so this is used even though
 /// nothing calls it by its own name.
 pub fn ignore_override(decorator_names: &[String]) -> bool {
-    fnmatch::match_many(decorator_names, OVERRIDE_DECORATOR_NAMES, true)
+    fnmatch::match_many(decorator_names, INTERFACE_DECORATOR_NAMES, true)
 }
 
 /// `@some_field.default` / `@some_field.validator` register an `attrs` field's

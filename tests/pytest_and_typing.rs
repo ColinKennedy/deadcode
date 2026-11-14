@@ -204,3 +204,17 @@ mod typing_override {
         assert!(result.contains("DC04 Method `method`"));
     }
 }
+
+mod interface_markers {
+    use super::*;
+
+    #[test]
+    fn abstract_methods_are_never_flagged() {
+        let p = Project::new();
+        p.write(
+            "myapp/foo.py",
+            "import abc\n\nclass Base:\n    @abc.abstractmethod\n    def method(self):\n        pass\n\nBase()\n",
+        );
+        assert_eq!(p.run(&["myapp/foo.py", "--no-color"]), None);
+    }
+}
