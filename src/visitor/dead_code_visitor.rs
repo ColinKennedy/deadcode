@@ -403,6 +403,17 @@ impl<'a> DeadCodeVisitor<'a> {
 
         let ignored = type_specific_ignored
             || fnmatch::match_any(name, &self.args.ignore_names, true)
+            || fnmatch::match_many(
+                &decorator_list
+                    .iter()
+                    .map(|decorator| get_decorator_name(&decorator.expression))
+                    .collect::<Vec<_>>(),
+                &self.args.ignore_names_if_decorated_with,
+                true,
+            )
+            || inherits_from.as_deref().is_some_and(|chain| {
+                fnmatch::match_many(chain, &self.args.ignore_names_if_inherits_from, true)
+            })
             || fnmatch::match_any(
                 &path_as_posix(&self.filename),
                 &self.args.ignore_names_in_files,
@@ -743,6 +754,14 @@ impl<'a> DeadCodeVisitor<'a> {
                 let mut should_turn_off = false;
                 let matches_ignore_defs =
                     fnmatch::match_any(c.name.as_str(), &self.args.ignore_definitions, true)
+                        || fnmatch::match_many(
+                            &c.decorator_list
+                                .iter()
+                                .map(|decorator| get_decorator_name(&decorator.expression))
+                                .collect::<Vec<_>>(),
+                            &self.args.ignore_definitions_if_decorated_with,
+                            true,
+                        )
                         || inherits_from.as_deref().is_some_and(|chain| {
                             fnmatch::match_many(
                                 chain,
@@ -782,6 +801,19 @@ impl<'a> DeadCodeVisitor<'a> {
                             should_turn_off = true;
                         }
                     }
+                    if !self.should_ignore_new_definitions
+                        && fnmatch::match_many(
+                            &c.decorator_list
+                                .iter()
+                                .map(|decorator| get_decorator_name(&decorator.expression))
+                                .collect::<Vec<_>>(),
+                            &self.args.ignore_bodies_if_decorated_with,
+                            true,
+                        )
+                    {
+                        self.should_ignore_new_definitions = true;
+                        should_turn_off = true;
+                    }
                 }
 
                 for decorator in &c.decorator_list {
@@ -809,6 +841,21 @@ impl<'a> DeadCodeVisitor<'a> {
             // byte-identical, and nothing in this visitor branches on
             // asyncness, so collapsing them is behavior-preserving.
             Stmt::FunctionDef(f) => {
+                let decorator_names = f
+                    .decorator_list
+                    .iter()
+                    .map(|decorator| get_decorator_name(&decorator.expression))
+                    .collect::<Vec<_>>();
+                let mut should_turn_off = false;
+                if fnmatch::match_many(
+                    &decorator_names,
+                    &self.args.ignore_definitions_if_decorated_with,
+                    true,
+                ) && !self.should_ignore_new_definitions
+                {
+                    self.should_ignore_new_definitions = true;
+                    should_turn_off = true;
+                }
                 self.walk_function_like(
                     &f.name,
                     &f.parameters,
@@ -818,6 +865,17 @@ impl<'a> DeadCodeVisitor<'a> {
                 );
                 self.scope_parts.push(f.name.as_str().to_string());
                 self.scope_kinds.push(ScopeKind::Function);
+                if !self.should_ignore_new_definitions
+                    && (fnmatch::match_any(f.name.as_str(), &self.args.ignore_bodies_of, true)
+                        || fnmatch::match_many(
+                            &decorator_names,
+                            &self.args.ignore_bodies_if_decorated_with,
+                            true,
+                        ))
+                {
+                    self.should_ignore_new_definitions = true;
+                    should_turn_off = true;
+                }
                 for decorator in &f.decorator_list {
                     self.walk_expr(&decorator.expression);
                 }
@@ -827,6 +885,9 @@ impl<'a> DeadCodeVisitor<'a> {
                 }
                 for s in &f.body {
                     self.walk_stmt(s);
+                }
+                if should_turn_off {
+                    self.should_ignore_new_definitions = false;
                 }
                 self.scope_parts.pop();
                 self.scope_kinds.pop();

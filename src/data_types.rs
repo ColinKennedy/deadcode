@@ -45,7 +45,7 @@ pub struct Args {
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_definitions: Vec<String>,
 
-    /// (No-op today, same as upstream — see FOLLOWUP.local.md.)
+    /// Ignores a decorated definition, including its name and body.
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_definitions_if_decorated_with: Vec<String>,
 
@@ -57,7 +57,7 @@ pub struct Args {
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_bodies_of: Vec<String>,
 
-    /// (No-op today, same as upstream.)
+    /// Ignores a decorated definition's body.
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_bodies_if_decorated_with: Vec<String>,
 
@@ -65,11 +65,11 @@ pub struct Args {
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_bodies_if_inherits_from: Vec<String>,
 
-    /// (No-op today, same as upstream.)
+    /// Ignores a decorated definition's name while still analysing its body.
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_if_decorated_with: Vec<String>,
 
-    /// (No-op today, same as upstream.)
+    /// Ignores class names that inherit from matching base classes.
     #[arg(long, num_args = 0.., action = clap::ArgAction::Append)]
     pub ignore_if_inherits_from: Vec<String>,
 
