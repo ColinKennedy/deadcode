@@ -20,6 +20,22 @@ pub const PYTEST_METHOD_NAMES: &[&str] = &[
     "setup_method",
     "teardown_method",
 ];
+pub const UNITTEST_METHOD_NAMES: &[&str] = &[
+    "setUp",
+    "tearDown",
+    "setUpClass",
+    "tearDownClass",
+    "asyncSetUp",
+    "asyncTearDown",
+];
+pub const UNITTEST_FUNCTION_NAMES: &[&str] = &["setUpModule", "tearDownModule"];
+pub const DJANGO_METHOD_NAMES: &[&str] = &[
+    "setUpTestData",
+    "_pre_setup",
+    "_post_teardown",
+    "_fixture_setup",
+    "_fixture_teardown",
+];
 pub const PYTEST_FIXTURE_DECORATOR_NAMES: &[&str] =
     &["@pytest.fixture", "@pytest_asyncio.fixture", "@fixture"];
 pub const PYTEST_USEFIXTURES_DECORATOR_NAMES: &[&str] = &[
@@ -77,7 +93,11 @@ pub fn ignore_import(filename: &Path, import_name: &str) -> bool {
 }
 
 pub fn ignore_function(filename: &Path, function_name: &str) -> bool {
-    ((PYTEST_FUNCTION_NAMES.contains(&function_name) || function_name.starts_with("test_"))
+    ((PYTEST_FUNCTION_NAMES.contains(&function_name)
+        || UNITTEST_METHOD_NAMES.contains(&function_name)
+        || UNITTEST_FUNCTION_NAMES.contains(&function_name)
+        || DJANGO_METHOD_NAMES.contains(&function_name)
+        || function_name.starts_with("test_"))
         && is_test_file(filename))
         || ignore_pytest_hook(filename, function_name)
 }
@@ -120,7 +140,10 @@ pub fn ignore_attrs_field_hook(decorator_names: &[String]) -> bool {
 
 pub fn ignore_method(filename: &Path, method_name: &str) -> bool {
     is_special_name(method_name)
-        || ((PYTEST_METHOD_NAMES.contains(&method_name) || method_name.starts_with("test_"))
+        || ((PYTEST_METHOD_NAMES.contains(&method_name)
+            || UNITTEST_METHOD_NAMES.contains(&method_name)
+            || DJANGO_METHOD_NAMES.contains(&method_name)
+            || method_name.starts_with("test_"))
             && is_test_file(filename))
 }
 

@@ -160,6 +160,23 @@ mod pytest_hooks {
     }
 }
 
+mod django_lifecycle {
+    use super::*;
+
+    #[test]
+    fn lifecycle_methods_are_ignored_only_in_test_files() {
+        let p = Project::new();
+        p.write(
+            "tests/test_models.py",
+            "class ModelTests:\n    def setUpTestData(cls):\n        pass\n\n    def _pre_setup(self):\n        pass\n\n    def unused_helper(self):\n        pass\n",
+        );
+        let output = p.run(&["tests/test_models.py", "--no-color"]).unwrap();
+        assert!(output.contains("Method `unused_helper` is never used"));
+        assert!(!output.contains("setUpTestData"));
+        assert!(!output.contains("_pre_setup"));
+    }
+}
+
 mod typing_override {
     use super::*;
 
