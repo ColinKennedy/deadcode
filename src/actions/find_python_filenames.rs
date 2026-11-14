@@ -17,13 +17,31 @@
 //! `pathlib.Path.is_file()`/`is_dir()` do by default) is preserved exactly,
 //! not silently dropped for a speed win.
 
+use std::collections::HashSet;
 use std::fs::{DirEntry, FileType};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::actions::parse_tach_config::TachIndex;
 use crate::data_types::Args;
 use crate::utils::fnmatch;
+use crate::utils::path_utils::resolve_path;
 use crate::visitor::code_item::path_as_posix;
+
+/// Python files participating in one dead-code analysis.
+///
+/// `analysis` includes Tach source roots so definitions and usages in
+/// dependent projects can be resolved. Only files discovered from explicit
+/// CLI paths are `reportable`; Tach-only files are reference context.
+pub(crate) struct PythonFilenames {
+    pub(crate) analysis: Vec<String>,
+    reportable: HashSet<PathBuf>,
+}
+
+impl PythonFilenames {
+    pub(crate) fn is_reportable(&self, path: &Path) -> bool {
+        self.reportable.contains(&resolve_path(path))
+    }
+}
 
 struct PendingPath {
     path: PathBuf,
@@ -45,13 +63,16 @@ fn resolve_file_type(entry: &DirEntry) -> Option<FileType> {
 /// (see `actions/parse_tach_config.rs`'s module doc comment for why there's
 /// no per-call memoization here, unlike Python's `@lru_cache`d
 /// `load_tach_index`).
-pub fn find_python_filenames(args: &Args, tach_index: &TachIndex) -> Vec<String> {
+fn find_python_filenames_from_paths(
+    paths_to_scan: impl IntoIterator<Item = PathBuf>,
+    args: &Args,
+    tach_index: &TachIndex,
+) -> Vec<String> {
     let mut filenames = Vec::new();
-    let mut paths: Vec<PendingPath> = args
-        .paths
-        .iter()
-        .map(|p| PendingPath {
-            path: PathBuf::from(p),
+    let mut paths: Vec<PendingPath> = paths_to_scan
+        .into_iter()
+        .map(|path| PendingPath {
+            path,
             file_type: None,
         })
         .collect();
@@ -111,14 +132,61 @@ pub fn find_python_filenames(args: &Args, tach_index: &TachIndex) -> Vec<String>
         }
     }
 
+    filenames
+}
+
+pub fn find_python_filenames(args: &Args, tach_index: &TachIndex) -> Vec<String> {
+    let filenames = find_python_filenames_from_paths(
+        args.paths.iter().map(PathBuf::from),
+        args,
+        tach_index,
+    );
+    log_filenames(args, &filenames);
+    filenames
+}
+
+/// Discover explicit CLI paths plus Tach source roots used as reference
+/// context, retaining which files are allowed to contribute findings.
+pub(crate) fn find_python_filenames_with_references(
+    args: &Args,
+    tach_index: &TachIndex,
+) -> PythonFilenames {
+    let mut analysis = find_python_filenames_from_paths(
+        args.paths.iter().map(PathBuf::from),
+        args,
+        tach_index,
+    );
+    let reportable: HashSet<PathBuf> = analysis
+        .iter()
+        .map(|filename| resolve_path(Path::new(filename)))
+        .collect();
+    let mut seen = reportable.clone();
+
+    let references = find_python_filenames_from_paths(
+        tach_index.source_roots().map(Path::to_path_buf),
+        args,
+        tach_index,
+    );
+    for filename in references {
+        if seen.insert(resolve_path(Path::new(&filename))) {
+            analysis.push(filename);
+        }
+    }
+
+    log_filenames(args, &analysis);
+    PythonFilenames {
+        analysis,
+        reportable,
+    }
+}
+
+fn log_filenames(args: &Args, filenames: &[String]) {
     if args.verbose {
         eprintln!(
             "Files to be checked for dead code:\n  - {}",
             filenames.join("\n  - ")
         );
     }
-
-    filenames
 }
 
 #[cfg(test)]

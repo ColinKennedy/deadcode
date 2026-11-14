@@ -208,6 +208,16 @@ impl<'a> DeadCodeVisitor<'a> {
     }
 
     pub fn visit_files(&mut self, filenames: &[String]) {
+        self.visit_files_with_parse_failure_reporting(filenames, |_| true);
+    }
+
+    pub(crate) fn visit_files_with_parse_failure_reporting<F>(
+        &mut self,
+        filenames: &[String],
+        should_report_parse_failure: F,
+    ) where
+        F: Fn(&Path) -> bool,
+    {
         for file_path in filenames {
             let Ok(file_content) = std::fs::read(file_path) else {
                 continue;
@@ -248,7 +258,9 @@ impl<'a> DeadCodeVisitor<'a> {
                         // let unparseable files vanish without a trace in CI.
                         // It goes to stderr, so `--count`'s machine-readable
                         // stdout stays clean.
-                        eprintln!("Error: Failed to parse {file_path} file, ignoring it.");
+                        if should_report_parse_failure(Path::new(file_path)) {
+                            eprintln!("Error: Failed to parse {file_path} file, ignoring it.");
+                        }
                         self.parse_failures.push(PathBuf::from(file_path));
                     }
                 }
