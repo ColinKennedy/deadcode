@@ -223,6 +223,20 @@ pub fn get_unused_import_parts(content: &[u8], unused_import_items: &[&CodeItem]
             continue;
         }
 
+        // Inside parentheses a trailing comma is valid, so upstream's rule
+        // (every alias but the last takes the comma after it) is kept there.
+        // Without them, a run of removed names after the last kept one must
+        // take the commas before them, or `a, ` is left behind.
+        let before_first_alias = TextRange::new(range.start(), aliases[0].start());
+        let parenthesized = content[before_first_alias].contains('(');
+        let takes_comma_after = |index: usize| {
+            if parenthesized {
+                index + 1 < aliases.len()
+            } else {
+                keys[index + 1..].iter().any(|key| !removable.contains(key))
+            }
+        };
+
         for (index, alias) in aliases.iter().enumerate() {
             let key = &keys[index];
             if !removable.contains(key) {
@@ -231,15 +245,16 @@ pub fn get_unused_import_parts(content: &[u8], unused_import_items: &[&CodeItem]
             let alias_start = source.start(alias.range());
             let alias_end = source.end(alias.range());
 
-            if let Some(next) = aliases.get(index + 1) {
-                // Not the last alias: take the comma after it.
+            if takes_comma_after(index) {
+                // Take the comma after it.
+                let next = aliases[index + 1];
                 if let Some(comma) = source.comma_between(alias_end, source.start(next.range())) {
                     let end_column = source.after_comma_and_blanks(comma);
                     parts.push(Part::new(alias_start.0, comma.0, alias_start.1, end_column));
                 }
             } else {
-                // The last alias (never the only one -- that case removed the
-                // whole statement): take the comma before it.
+                // Take the comma before it (never the only alias: that case
+                // removed the whole statement).
                 let previous_end = source.end(aliases[index - 1].range());
                 if let Some(comma) = source.comma_between(previous_end, alias_start) {
                     if previous_end.0 != alias_start.0 {
@@ -331,6 +346,12 @@ mod tests {
     #[test]
     fn removes_the_last_name_with_the_comma_before_it() {
         let fixed = fix("from os import sep, path\nprint(sep)\n");
+        assert_eq!(fixed, "from os import sep\nprint(sep)\n");
+    }
+
+    #[test]
+    fn removes_several_trailing_names_with_their_commas() {
+        let fixed = fix("from os import sep, path, getcwd, walk\nprint(sep)\n");
         assert_eq!(fixed, "from os import sep\nprint(sep)\n");
     }
 

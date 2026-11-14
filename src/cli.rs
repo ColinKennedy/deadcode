@@ -76,7 +76,7 @@ pub fn main_with_config(
             !args
                 .ignore_rules
                 .iter()
-                .any(|rule| rule == item.error_code())
+                .any(|rule| rule.eq_ignore_ascii_case(item.error_code()))
         })
         .collect::<Vec<_>>();
 
