@@ -44,7 +44,7 @@ fn class_attribute_reported_by_default_ignored_with_flag() {
     let p1 = Project::new();
     p1.write("foo.py", src);
     let result = p1.run(&["foo.py", "--no-color"]).unwrap();
-    assert!(result.contains("DC01 Variable `THING`"));
+    assert!(result.contains("DC06 Name `THING` is never used"));
 
     p.write("foo.py", src);
     assert_eq!(

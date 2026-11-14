@@ -82,3 +82,15 @@ fn unused_import_suppressed() {
     p.write("foo.py", "from typing import Optional  # noqa: DC07\n");
     assert_eq!(p.run(&["foo.py", "--no-color"]), None);
 }
+
+#[test]
+fn class_body_names_use_the_dc06_code_for_noqa() {
+    let p = Project::new();
+    p.write(
+        "foo.py",
+        "class Foo:\n    kept = 1  # noqa: DC06\n    reported = 2  # noqa: DC01\n\n\nFoo()\n",
+    );
+    let result = p.run(&["foo.py", "--no-color"]).unwrap();
+    assert!(!result.contains("`kept`"));
+    assert!(result.contains("foo.py:3:4: DC06 Name `reported` is never used"));
+}

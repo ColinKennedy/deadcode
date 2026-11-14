@@ -45,6 +45,9 @@ enum DefinedKind {
     Method,
     Property,
     Variable,
+    /// A variable assigned directly in a class body: upstream's DC06
+    /// "unused name" rather than DC01.
+    ClassBodyName,
 }
 
 impl DefinedKind {
@@ -57,6 +60,7 @@ impl DefinedKind {
             DefinedKind::Method => UnusedCodeType::Method,
             DefinedKind::Property => UnusedCodeType::Property,
             DefinedKind::Variable => UnusedCodeType::Variable,
+            DefinedKind::ClassBodyName => UnusedCodeType::Name,
         }
     }
 }
@@ -945,7 +949,7 @@ impl<'a> DeadCodeVisitor<'a> {
             DefinedKind::Import => self.defined_imports.push(code_item),
             DefinedKind::Method => self.defined_methods.push(code_item),
             DefinedKind::Property => self.defined_props.push(code_item),
-            DefinedKind::Variable => self.defined_vars.push(code_item),
+            DefinedKind::Variable | DefinedKind::ClassBodyName => self.defined_vars.push(code_item),
         }
     }
 
@@ -956,7 +960,12 @@ impl<'a> DeadCodeVisitor<'a> {
         let ignored = ignore::ignore_variable(name);
         let removal_range = self.assignment_removal_range.take();
         let recorded_before = self.defined_vars.len();
-        self.push_definition(DefinedKind::Variable, name, start, end, &[], ignored, None);
+        let kind = if self.is_directly_in_class_body() {
+            DefinedKind::ClassBodyName
+        } else {
+            DefinedKind::Variable
+        };
+        self.push_definition(kind, name, start, end, &[], ignored, None);
         if let Some(range) = removal_range.filter(|_| self.defined_vars.len() > recorded_before) {
             self.widen_last_variable_to(range);
         }
