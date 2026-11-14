@@ -13,8 +13,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use ruff_python_ast::{
-    Alias, Decorator, Expr, ExprContext, Identifier, InterpolatedStringElement, Keyword, Operator,
-    Parameters, Pattern, Stmt,
+    Alias, BoolOp, Decorator, Expr, ExprContext, Identifier, InterpolatedStringElement, Keyword,
+    Operator, Parameters, Pattern, Stmt,
 };
 use ruff_text_size::{Ranged, TextSize};
 
@@ -73,6 +73,7 @@ pub struct DeadCodeVisitor<'a> {
     defined_props: Vec<CodeItem>,
     defined_vars: Vec<CodeItem>,
     pub unused_file: Vec<CodeItem>,
+    unreachable_body: Vec<CodeItem>,
     unreachable_code: Vec<CodeItem>,
 
     /// Files that could not be parsed and were therefore skipped entirely.
@@ -185,6 +186,7 @@ impl<'a> DeadCodeVisitor<'a> {
             defined_props: Vec::new(),
             defined_vars: Vec::new(),
             unused_file: Vec::new(),
+            unreachable_body: Vec::new(),
             unreachable_code: Vec::new(),
             parse_failures: Vec::new(),
             used_names: HashSet::new(),
@@ -279,6 +281,7 @@ impl<'a> DeadCodeVisitor<'a> {
         unused.extend(unused_of(&self.defined_methods, &self.used_names));
         unused.extend(unused_of(&self.defined_props, &self.used_names));
         unused.extend(unused_of(&self.defined_vars, &self.used_names));
+        unused.extend(self.unreachable_body.iter().cloned());
         unused.extend(self.unreachable_code.iter().cloned());
         unused.extend(self.unused_file.iter().cloned());
 
@@ -294,6 +297,80 @@ impl<'a> DeadCodeVisitor<'a> {
 
     fn is_directly_in_class_body(&self) -> bool {
         self.scope_kinds.last() == Some(&ScopeKind::Class)
+    }
+
+    /// Record a DC09 finding. The caller chooses the precise source span to
+    /// remove: a false condition removes the full statement, while an always
+    /// true condition removes just its unreachable `else` suite.
+    fn add_unreachable_body(
+        &mut self,
+        name: &str,
+        range: ruff_text_size::TextRange,
+        message: &str,
+    ) {
+        let (line, column) = self.line_index.line_col(range.start());
+        let (end_line, end_column) = self.line_index.line_col(range.end());
+        if self.should_ignore_new_definitions
+            || fnmatch::match_any(name, &self.args.ignore_names, true)
+            || fnmatch::match_any(
+                &path_as_posix(&self.filename),
+                &self.args.ignore_names_in_files,
+                true,
+            )
+            || noqa::ignore_line(&self.noqa_lines, line as u32, "DC09")
+        {
+            return;
+        }
+        self.unreachable_body.push(CodeItem::new(
+            name.to_string(),
+            UnusedCodeType::UnreachableBody,
+            self.filename.clone(),
+            vec![Part::new(
+                line as u32,
+                end_line as u32,
+                column as u32,
+                end_column as u32,
+            )],
+            (!self.scope_parts.is_empty()).then(|| self.scope_parts.join(".")),
+            None,
+            Some(line as u32),
+            Some(column as u32),
+            message.to_string(),
+        ));
+    }
+
+    /// Mirror upstream's safe, conservative condition evaluator. Unknown
+    /// expressions are substituted with both truth values, so only conditions
+    /// that are provably true or false produce a finding.
+    fn condition_truth_value(expression: &Expr, unknown_value: bool) -> bool {
+        match expression {
+            Expr::BooleanLiteral(value) => value.value,
+            Expr::NoneLiteral(_) => false,
+            Expr::BoolOp(value) => match value.op {
+                BoolOp::And => value
+                    .values
+                    .iter()
+                    .all(|part| Self::condition_truth_value(part, unknown_value)),
+                BoolOp::Or => value
+                    .values
+                    .iter()
+                    .any(|part| Self::condition_truth_value(part, unknown_value)),
+            },
+            Expr::UnaryOp(value) if value.op == ruff_python_ast::UnaryOp::Not => {
+                !Self::condition_truth_value(&value.operand, !unknown_value)
+            }
+            _ => unknown_value,
+        }
+    }
+
+    fn conditional_outcome(expression: &Expr) -> Option<bool> {
+        if !Self::condition_truth_value(expression, true) {
+            Some(false)
+        } else if Self::condition_truth_value(expression, false) {
+            Some(true)
+        } else {
+            None
+        }
     }
 
     /// Walk a statement list while reporting the contiguous suffix that can
@@ -994,11 +1071,41 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.walk_stmt_list(&s.orelse);
             }
             Stmt::While(s) => {
+                match Self::conditional_outcome(&s.test) {
+                    Some(false) => self.add_unreachable_body(
+                        "while",
+                        s.range,
+                        "Unsatisfiable `while` condition",
+                    ),
+                    Some(true) if !s.orelse.is_empty() => {
+                        self.add_unreachable_body(
+                            "else",
+                            s.orelse[0].range(),
+                            "Unreachable `else` block",
+                        );
+                    }
+                    _ => {}
+                }
                 self.walk_expr(&s.test);
                 self.walk_stmt_list(&s.body);
                 self.walk_stmt_list(&s.orelse);
             }
             Stmt::If(s) => {
+                match Self::conditional_outcome(&s.test) {
+                    Some(false) => {
+                        self.add_unreachable_body("if", s.range, "Unsatisfiable `if` condition")
+                    }
+                    Some(true) => {
+                        if let Some(first_clause) = s.elif_else_clauses.first() {
+                            self.add_unreachable_body(
+                                "else",
+                                first_clause.body[0].range(),
+                                "Unreachable `else` block",
+                            );
+                        }
+                    }
+                    _ => {}
+                }
                 self.walk_expr(&s.test);
                 self.walk_stmt_list(&s.body);
                 // Python nests each `elif` as another `If` inside `orelse`,

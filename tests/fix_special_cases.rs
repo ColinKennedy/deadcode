@@ -33,51 +33,61 @@ mod empty_files {
     }
 }
 
-/// Negative-parity: literal `if True`/`if False`/`while True`/`while False`
-/// branches are NOT pruned/fixed — this port deliberately doesn't implement
-/// unreachable-code removal at all (see `dead_code_visitor.rs`'s module doc
-/// comment: the Python original computes it but never surfaces it either).
-mod unreachable_code_is_not_removed {
+mod unreachable_literal_condition {
     use super::*;
 
-    // Bodies deliberately define nothing (just literal-arg `print` calls) so
-    // the only thing under test is "does a DC09 finding ever leak into the
-    // report" — no unrelated DC01 confounds the `result == None` assertion.
-
     #[test]
-    fn if_true_else_unchanged() {
+    fn true_if_removes_else_body_and_keeps_a_valid_block() {
         let p = Project::new();
         let src = "if True:\n    print(\"a\")\nelse:\n    print(\"b\")\n";
         p.write("foo.py", src);
-        assert_eq!(p.run(&["foo.py", "--no-color", "--fix"]), None);
-        assert_eq!(p.read("foo.py"), src);
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC09 Unreachable `else` block"));
+        assert_eq!(
+            p.read("foo.py"),
+            "if True:\n    print(\"a\")\nelse:\n    pass\n"
+        );
     }
 
     #[test]
-    fn if_false_else_unchanged() {
+    fn false_if_removes_the_full_statement() {
         let p = Project::new();
         let src = "if False:\n    print(\"a\")\nelse:\n    print(\"b\")\n";
         p.write("foo.py", src);
-        assert_eq!(p.run(&["foo.py", "--no-color", "--fix"]), None);
-        assert_eq!(p.read("foo.py"), src);
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC09 Unsatisfiable `if` condition"));
+        assert!(!p.exists("foo.py"));
     }
 
     #[test]
-    fn while_true_else_unchanged() {
+    fn true_while_removes_else_body_and_keeps_a_valid_block() {
         let p = Project::new();
         let src = "while True:\n    print(\"a\")\n    break\nelse:\n    print(\"b\")\n";
         p.write("foo.py", src);
-        assert_eq!(p.run(&["foo.py", "--no-color", "--fix"]), None);
-        assert_eq!(p.read("foo.py"), src);
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC09 Unreachable `else` block"));
+        assert_eq!(
+            p.read("foo.py"),
+            "while True:\n    print(\"a\")\n    break\nelse:\n    pass\n"
+        );
     }
 
     #[test]
-    fn while_false_else_unchanged() {
+    fn false_while_removes_the_full_statement() {
         let p = Project::new();
         let src = "while False:\n    print(\"a\")\nelse:\n    print(\"b\")\n";
         p.write("foo.py", src);
-        assert_eq!(p.run(&["foo.py", "--no-color", "--fix"]), None);
-        assert_eq!(p.read("foo.py"), src);
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC09 Unsatisfiable `while` condition"));
+        assert!(!p.exists("foo.py"));
+    }
+
+    #[test]
+    fn boolean_expression_with_an_unknown_still_reports_a_provable_outcome() {
+        let p = Project::new();
+        p.write("foo.py", "if unknown and False:\n    print(\"never\")\n");
+        let result = p.run(&["foo.py", "--no-color"]).unwrap();
+        assert!(result.contains("DC09 Unsatisfiable `if` condition"));
     }
 }
 
