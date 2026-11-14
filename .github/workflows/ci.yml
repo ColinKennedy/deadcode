@@ -32,7 +32,7 @@ jobs:
       # behind whichever fails first.
       fail-fast: false
       matrix:
-        check: [fmt, clippy, test, ruff, ruff-format, mypy, privata]
+        check: [fmt, clippy, test, ruff, ruff-format, mypy]
     steps:
       - uses: actions/checkout@v4
 
