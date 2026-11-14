@@ -50,13 +50,65 @@ mod unreachable_literal_condition {
     }
 
     #[test]
-    fn false_if_removes_the_full_statement() {
+    fn false_if_without_else_removes_the_full_statement() {
+        let p = Project::new();
+        p.write("foo.py", "if False:\n    print(\"a\")\nprint(\"b\")\n");
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("foo.py:2:4: DC09 Unsatisfiable `if` condition"));
+        assert_eq!(p.read("foo.py"), "print(\"b\")\n");
+    }
+
+    /// Upstream removes the whole statement here, `else:` included -- deleting
+    /// code that always runs.
+    #[test]
+    fn false_if_keeps_its_reachable_else() {
         let p = Project::new();
         let src = "if False:\n    print(\"a\")\nelse:\n    print(\"b\")\n";
         p.write("foo.py", src);
+        p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert_eq!(
+            p.read("foo.py"),
+            "if False:\n    pass\nelse:\n    print(\"b\")\n"
+        );
+    }
+
+    #[test]
+    fn true_if_removes_the_whole_elif_chain() {
+        let p = Project::new();
+        let src = "import sys\nif True:\n    print(\"c\")\nelif sys.argv:\n    print(\"d\")\n    print(\"e\")\nelse:\n    print(\"f\")\n";
+        p.write("foo.py", src);
         let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
-        assert!(result.contains("DC09 Unsatisfiable `if` condition"));
-        assert!(!p.exists("foo.py"));
+        assert!(result.contains("foo.py:4:0: DC09 Unreachable `else` block"));
+        assert_eq!(p.read("foo.py"), "import sys\nif True:\n    print(\"c\")\n");
+    }
+
+    #[test]
+    fn numeric_string_and_container_constants_are_evaluated() {
+        let p = Project::new();
+        p.write(
+            "foo.py",
+            "while 0:\n    print(1)\nif \"\":\n    print(2)\nif []:\n    print(3)\nif (1,):\n    print(4)\n",
+        );
+        let result = p.run(&["foo.py", "--no-color"]).unwrap();
+        assert!(result.contains("foo.py:2:4: DC09 Unsatisfiable `while` condition"));
+        assert!(result.contains("foo.py:4:4: DC09 Unsatisfiable `if` condition"));
+        assert!(result.contains("foo.py:6:4: DC09 Unsatisfiable `if` condition"));
+        assert!(result.contains("foo.py:7:0: DC09 Redundant `if` condition"));
+    }
+
+    /// Upstream removes a redundant `if True:` body that always runs, and
+    /// cuts ternary operands out leaving invalid code.
+    #[test]
+    fn redundant_if_and_ternaries_are_reported_but_not_removed() {
+        let p = Project::new();
+        let src =
+            "if True:\n    print(1)\nx = 1 if False else 2\ny = 1 if True else 2\nprint(x, y)\n";
+        p.write("foo.py", src);
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("foo.py:1:0: DC09 Redundant `if` condition"));
+        assert!(result.contains("foo.py:3:4: DC09 Unsatisfiable `ternary` condition"));
+        assert!(result.contains("foo.py:4:19: DC09 Unreachable `else` expression"));
+        assert_eq!(p.read("foo.py"), src);
     }
 
     #[test]
@@ -73,13 +125,16 @@ mod unreachable_literal_condition {
     }
 
     #[test]
-    fn false_while_removes_the_full_statement() {
+    fn false_while_keeps_its_reachable_else() {
         let p = Project::new();
         let src = "while False:\n    print(\"a\")\nelse:\n    print(\"b\")\n";
         p.write("foo.py", src);
         let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
         assert!(result.contains("DC09 Unsatisfiable `while` condition"));
-        assert!(!p.exists("foo.py"));
+        assert_eq!(
+            p.read("foo.py"),
+            "while False:\n    pass\nelse:\n    print(\"b\")\n"
+        );
     }
 
     #[test]
