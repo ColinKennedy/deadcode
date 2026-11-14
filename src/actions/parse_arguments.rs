@@ -104,12 +104,14 @@ fn merge_pyproject_toml(args: &mut Args, pyproject_path: &Path) {
             }
             continue;
         }
-        let Some(extra) = value.as_array().map(|arr| {
-            arr.iter()
+        // A scalar string is one pattern, as upstream treats it.
+        let extra: Vec<String> = match value {
+            toml::Value::Array(values) => values
+                .iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
-                .collect::<Vec<_>>()
-        }) else {
-            continue;
+                .collect(),
+            toml::Value::String(single) => vec![single.clone()],
+            _ => continue,
         };
 
         match key.as_str() {
@@ -273,6 +275,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(args.ignore_rules, vec!["DC01", "DC12"]);
+    }
+
+    #[test]
+    fn pyproject_toml_scalar_string_is_one_pattern() {
+        let dir = tempfile::tempdir().unwrap();
+        let toml_path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &toml_path,
+            "[tool.deadcode]\nignore-names-if-inherits-from = \"ViewEventListener\"\n",
+        )
+        .unwrap();
+        let args = parse_arguments_with_config(&[".".to_string()], &toml_path).unwrap();
+        assert_eq!(
+            args.ignore_names_if_inherits_from,
+            vec!["ViewEventListener"]
+        );
     }
 
     #[test]

@@ -27,8 +27,8 @@ import deadcode.cli
 from deadcode.utils.fix_indent import fix_indent
 
 BINARY = Path(os.environ["DEADCODE_RUST_BINARY"])
+LEGACY_ROOT = Path(deadcode.cli.__file__).resolve().parent.parent
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-DOT_SLASH = re.compile(r"(^|(?<=[-+]{3} ))\./", re.MULTILINE)
 WELL_DONE = "Well done! ✨ \U0001f680 ✨"
 # Options that take no value; every other `--option` consumes the next token.
 FLAGS = {
@@ -53,14 +53,21 @@ def _run(command_line_args):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         # Configuration tests write a real pyproject.toml into the working
-        # directory next to their virtual files.
-        if (pyproject := Path.cwd() / "pyproject.toml").is_file():
+        # directory next to their virtual files; legacy-python's own (the
+        # working directory of every other test) is not part of the test.
+        pyproject = Path.cwd() / "pyproject.toml"
+        if pyproject.is_file() and Path.cwd() != LEGACY_ROOT:
             (root / "pyproject.toml").write_bytes(pyproject.read_bytes())
         written = {}
         for name, content in vfs.files.items():
             path = root / name.lstrip("/")
             path.parent.mkdir(parents=True, exist_ok=True)
-            written[name] = fix_indent(content) or b""
+            # The virtual file system's `readlines()` (what upstream diffs
+            # and fixes) ends every line, the last included, with a newline.
+            content = fix_indent(content) or b""
+            if content and not content.endswith(b"\n"):
+                content += b"\n"
+            written[name] = content
             path.write_bytes(written[name])
         # The virtual file system feeds every file to deadcode regardless of
         # path arguments, so analyse the whole directory instead: the first
@@ -90,7 +97,10 @@ def _invoke(args, cwd):
     completed = subprocess.run(
         [str(BINARY), *args], cwd=cwd, capture_output=True, encoding="utf-8", check=False
     )
-    output = DOT_SLASH.sub("", ANSI.sub("", completed.stdout)).rstrip("\n")
+    # `println!` adds the one newline upstream's returned message lacks.
+    output = completed.stdout.removesuffix("\n")
+    if "--no-color" in args:
+        output = ANSI.sub("", output)
     return output, completed.returncode
 
 

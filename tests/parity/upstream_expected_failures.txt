@@ -1,0 +1,21 @@
+# legacy-python tests expected to fail against the Rust binary.
+#
+# Checked by scripts/upstream_tests.py: one pytest node id per line, with a
+# reason. A failure missing from this list fails the run, and so does a listed
+# test that now passes -- delete its line.
+tests/cli/test_cli_output_encoding.py::test_main_finishes_when_stdout_cannot_encode  # harness: mocks Python's sys.stdout encoding, which a subprocess never sees
+tests/cli/test_cli_output_encoding.py::test_parse_warning_with_non_ascii_filename_on_ascii_only_stream  # harness: mocks Python's sys.stdout encoding, which a subprocess never sees
+tests/cli/test_cli_output_encoding.py::test_parse_warning_with_non_ascii_filename_on_cp1252_stream  # harness: mocks Python's sys.stdout encoding, which a subprocess never sees
+tests/cli/test_cli_output_encoding.py::test_stringio_stdout_without_buffer_or_reconfigure  # harness: mocks Python's sys.stdout encoding, which a subprocess never sees
+tests/cli/test_deadcode.py::test_invalid_python_file_found  # intentional: Rust reports unparseable files and exits non-zero instead of passing silently
+tests/cli_args/test_ignore_option_combinations.py::test_pyproject_config_and_command_line_values_are_united  # harness: configuration comes from a mocked Python function
+tests/cli_args/test_verbose.py::test_verbose_configures_info_logging  # harness: asserts on Python's logging configuration
+tests/cli_args/test_verbose.py::test_verbose_logs_files_to_be_checked  # harness: asserts on Python's logging configuration
+tests/cli_args/test_version.py::test_show_version  # packaging: the Rust CLI is versioned separately (Cargo.toml)
+tests/cli_args/test_version.py::test_show_version_when_path_provided  # packaging: the Rust CLI is versioned separately (Cargo.toml)
+tests/cli_args/test_version.py::test_show_version_with_short_option  # packaging: the Rust CLI is versioned separately (Cargo.toml)
+tests/cli_args/test_version.py::test_show_version_with_short_option_when_path_provided  # packaging: the Rust CLI is versioned separately (Cargo.toml)
+tests/fix/test_unreachable_code.py::test_if_is_removed_when_condition_is_false  # intentional: the reachable `else:` under `if False:` is kept
+tests/fix/test_unreachable_code.py::test_while_is_removed_when_condition_is_false  # intentional: the reachable `else:` under `while False:` is kept
+tests/noqa/test_noqa_comments.py::test_unused_variable  # intentional: Rust reports unparseable files and exits non-zero instead of passing silently
+tests/visitor/test_imports.py::test_file_contains_syntax_error  # intentional: Rust reports unparseable files and exits non-zero instead of passing silently

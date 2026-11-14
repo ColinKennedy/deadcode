@@ -124,7 +124,11 @@ pub fn main_with_config(
         // a CPython text-I/O-encoding concern with no Rust equivalent —
         // `println!` writes UTF-8 bytes directly and can't fail this way, so
         // there's nothing to fall back from.
-        println!("\x1b[1mWell done!\x1b[0m \u{2728} \u{1f680} \u{2728}");
+        if args.no_color {
+            println!("Well done! \u{2728} \u{1f680} \u{2728}");
+        } else {
+            println!("\x1b[1mWell done!\x1b[0m \u{2728} \u{1f680} \u{2728}");
+        }
     }
 
     Ok(None)

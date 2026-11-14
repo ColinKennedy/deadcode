@@ -7,6 +7,7 @@
     python scripts/check.py pytest              # legacy suite on every Python
     python scripts/check.py pytest --python 3.12   # ...or just one
     python scripts/check.py parity              # Rust CLI vs legacy-python
+    python scripts/check.py upstream            # legacy-python's tests vs the Rust CLI
     python scripts/check.py --list
 
 The GitHub workflow invokes these exact commands, so CI and local runs cannot
@@ -113,6 +114,16 @@ def _parity() -> list[str]:
     return ["uv", "run", "--quiet", "-p", LINT_PY, "python", str(ROOT / "scripts" / "parity.py")]
 
 
+def _upstream() -> list[str]:
+    # Project mode for the same reason as `_parity`; pytest (and PyYAML, for
+    # the pre-commit configuration test) come from the pins.
+    return [
+        "uv", "run", "--quiet", "-p", LINT_PY,
+        "--with", pinned("pytest"), "--with", pinned("pyyaml"),
+        "python", str(ROOT / "scripts" / "upstream_tests.py"),
+    ]
+
+
 CHECKS = [
     Check("fmt", "rust", "cargo fmt --check", ["cargo", "fmt", "--check"], ROOT),
     Check("clippy", "rust", "cargo clippy (warnings denied)",
@@ -127,6 +138,8 @@ CHECKS = [
           _pytest, LEGACY, per_python=True),
     Check("parity", "parity", "Rust CLI vs legacy-python on tests/parity cases",
           _parity, LEGACY),
+    Check("upstream", "parity", "legacy-python's pytest suite against the Rust CLI",
+          _upstream, LEGACY),
 ]
 
 BY_NAME = {c.name: c for c in CHECKS}

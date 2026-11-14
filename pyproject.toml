@@ -22,8 +22,8 @@ classifiers = [
 ]
 
 [project.urls]
-homepage = "https://github.com/albertas/deadcode"
-documentation = "https://deadcode.readthedocs.io/"
+homepage = "https://github.com/ColinKennedy/deadcode"
+repository = "https://github.com/ColinKennedy/deadcode"
 
 [tool.maturin]
 bindings = "bin"

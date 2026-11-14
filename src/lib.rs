@@ -9,6 +9,7 @@ pub mod utils {
     pub mod line_index;
     pub mod nested_scopes;
     pub mod path_utils;
+    pub mod unified_diff;
 }
 
 pub mod actions {

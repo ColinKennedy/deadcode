@@ -94,3 +94,13 @@ fn class_body_names_use_the_dc06_code_for_noqa() {
     assert!(!result.contains("`kept`"));
     assert!(result.contains("foo.py:3:4: DC06 Name `reported` is never used"));
 }
+
+#[test]
+fn noqa_on_the_first_decorator_line_suppresses_the_definition() {
+    let p = Project::new();
+    p.write(
+        "foo.py",
+        "import functools\n\n\n@functools.cache  # noqa: DC02\ndef unused_function():\n    pass\n",
+    );
+    assert_eq!(p.run(&["foo.py", "--no-color"]), None);
+}

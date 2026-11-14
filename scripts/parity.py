@@ -25,9 +25,8 @@ listed difference that no longer occurs -- so the list can only shrink, and
 "parity" is something CI measures rather than something a PR description
 claims.
 
-Two cosmetic differences are normalised away rather than tracked: ANSI escape
-codes, and the `./` prefix Rust puts on paths (upstream prints `m.py`, Rust
-`./m.py`).
+ANSI escape codes are stripped before comparing; everything else, including
+how paths are spelled, must match.
 
 The legacy implementation runs in the interpreter executing this script, so run
 it where `deadcode` (legacy-python) is importable -- `scripts/check.py parity`
@@ -58,7 +57,6 @@ LEGACY_ENTRY = (
     "sys.exit(print_main(sys.argv[1:]))"
 )
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-DOT_SLASH = re.compile(r"(^|(?<=[-+]{3} ))\./", re.MULTILINE)
 
 
 def rust_binary() -> Path:
@@ -93,7 +91,7 @@ def stage(source: Path, destination: Path) -> list[str]:
 
 
 def normalise(text: str) -> str:
-    return DOT_SLASH.sub("", ANSI.sub("", text)).replace("\r\n", "\n").strip()
+    return ANSI.sub("", text).replace("\r\n", "\n").strip()
 
 
 def run(command: list[str], cwd: Path) -> str:

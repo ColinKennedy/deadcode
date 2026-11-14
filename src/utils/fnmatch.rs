@@ -115,12 +115,17 @@ pub fn fnmatch(name: &str, pattern: &str) -> bool {
 
 /// Port of `deadcode/visitor/ignore.py`'s `_match(name, patterns, case=True)`:
 /// true if `name` matches ANY of `patterns`.
+///
+/// Like upstream, backslashes in both the name and the patterns count as
+/// forward slashes, so a Windows-style `src\*` matches `src/foo.py`.
 pub fn match_any<S: AsRef<str>>(name: &str, patterns: &[S], case_sensitive: bool) -> bool {
+    let name = name.replace('\\', "/");
     patterns.iter().any(|p| {
+        let pattern = p.as_ref().replace('\\', "/");
         if case_sensitive {
-            fnmatchcase(name, p.as_ref())
+            fnmatchcase(&name, &pattern)
         } else {
-            fnmatch(name, p.as_ref())
+            fnmatch(&name, &pattern)
         }
     })
 }

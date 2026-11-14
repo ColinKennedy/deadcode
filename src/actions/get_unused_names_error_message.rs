@@ -9,8 +9,20 @@ use crate::visitor::code_item::{path_as_posix, CodeItem};
 /// logic downstream must check `is_some()`, not truthiness, to get this
 /// right; see the `--quiet` regression covered in the ported test suite).
 pub fn get_unused_names_error_message(unused_names: &[CodeItem], args: &Args) -> Option<String> {
+    // `--only` narrows what is reported -- and so what `--count` counts --
+    // not what is analysed.
+    let had_unused_names = !unused_names.is_empty();
+    let unused_names: Vec<&CodeItem> = unused_names
+        .iter()
+        .filter(|item| {
+            args.only.is_empty()
+                || fnmatch::match_any(&path_as_posix(&item.filename), &args.only, true)
+        })
+        .collect();
     if unused_names.is_empty() {
-        return None;
+        // Upstream keeps an empty (failing) message when `--only` filtered
+        // every finding away, except under `--count` / `--quiet`.
+        return (had_unused_names && !args.count && !args.quiet).then(String::new);
     }
     if args.quiet {
         return Some(String::new());
@@ -21,31 +33,27 @@ pub fn get_unused_names_error_message(unused_names: &[CodeItem], args: &Args) ->
 
     let mut messages: Vec<String> = Vec::new();
     for item in unused_names {
-        if args.only.is_empty()
-            || fnmatch::match_any(&path_as_posix(&item.filename), &args.only, true)
-        {
-            let mut message = format!(
-                "{} \x1b[91m{}\x1b[0m ",
-                item.filename_with_position(),
-                item.error_code()
-            );
-            if !item.message.is_empty() {
-                message.push_str(&item.message);
-            } else {
-                message.push_str(&format!(
-                    "{} `\x1b[1m{}\x1b[0m` is never used",
-                    item.type_.display_name(),
-                    item.name
-                ));
-            }
-            if args.no_color {
-                message = message
-                    .replace("\x1b[91m", "")
-                    .replace("\x1b[1m", "")
-                    .replace("\x1b[0m", "");
-            }
-            messages.push(message);
+        let mut message = format!(
+            "{} \x1b[91m{}\x1b[0m ",
+            item.filename_with_position(),
+            item.error_code()
+        );
+        if !item.message.is_empty() {
+            message.push_str(&item.message);
+        } else {
+            message.push_str(&format!(
+                "{} `\x1b[1m{}\x1b[0m` is never used",
+                item.type_.display_name(),
+                item.name
+            ));
         }
+        if args.no_color {
+            message = message
+                .replace("\x1b[91m", "")
+                .replace("\x1b[1m", "")
+                .replace("\x1b[0m", "");
+        }
+        messages.push(message);
     }
 
     if args.fix {
