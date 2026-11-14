@@ -23,8 +23,9 @@ concurrency:
 
 jobs:
   # Version-independent checks: the Rust toolchain, the Python linters (which
-  # analyse source rather than run it), and parity, which runs the Rust CLI and
-  # legacy-python side by side (see scripts/parity.py).
+  # analyse source rather than run it), and the two parity checks, which run
+  # the Rust CLI against legacy-python (scripts/parity.py) and against its
+  # test suite (scripts/upstream_tests.py).
   static:
     name: ${{ matrix.check }}
     runs-on: ubuntu-latest
@@ -33,7 +34,7 @@ jobs:
       # behind whichever fails first.
       fail-fast: false
       matrix:
-        check: [fmt, clippy, test, ruff, ruff-format, mypy, parity]
+        check: [fmt, clippy, test, ruff, ruff-format, mypy, parity, upstream]
     steps:
       - uses: actions/checkout@v4
 
