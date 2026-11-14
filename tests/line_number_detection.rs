@@ -30,7 +30,8 @@ fn unused_class_members_and_subclass_counted() {
         "class Foo:\n    bar = None\n    spam = None\n\n    def eggs(self):\n        return None\n\n\nclass Bar(Foo):\n    pass\n",
     );
     let result = p.run(&["foo.py", "--count"]).unwrap();
-    assert_eq!(result, "4");
+    // `Foo` is used only by the unused `Bar`, so it cascades.
+    assert_eq!(result, "5");
 }
 
 #[test]

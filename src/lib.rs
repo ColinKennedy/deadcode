@@ -27,6 +27,8 @@ pub mod visitor {
     pub mod code_item;
     pub mod dead_code_visitor;
     pub mod ignore;
+    pub mod module_exports;
     pub mod noqa;
+    pub mod usage_graph;
     pub mod utils;
 }

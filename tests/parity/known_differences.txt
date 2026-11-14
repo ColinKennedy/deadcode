@@ -5,23 +5,15 @@
 # that no longer occurs -- delete its line when you fix it.
 #
 # "intentional" entries are upstream bugs Rust deliberately does not copy.
-cascade dry  # phase 3: cascading dead code (upstream #127)
-cascade report  # phase 3: cascading dead code (upstream #127)
+cascade dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
 dc09b dry  # intentional: upstream deletes the reachable `else:` under `if False:`
 django_mw dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
-fastapi dry  # intentional: upstream misses usages in default arguments (Depends(get_db))
-fastapi report  # intentional: upstream misses usages in default arguments (Depends(get_db))
-legacy-django dry  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
-legacy-django report  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
-legacy-fastapi dry  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
-legacy-fastapi report  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
-legacy-fastapi_dependency_injection dry  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
-legacy-fastapi_dependency_injection report  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
-legacy-fastapi_features dry  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
-legacy-fastapi_features report  # phase 3: cascading dead code and same-name resolution (upstream #122, #127)
+legacy-django dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
+legacy-fastapi dry  # intentional: upstream --dry deletes emptied files and leaves `: str` stubs
+legacy-fastapi_dependency_injection dry  # intentional: upstream --dry deletes emptied files and leaves `: str` stubs
+legacy-fastapi_features dry  # intentional: upstream --dry deletes emptied files and leaves `: str` stubs
 legacy-functions dry  # phase 4: unified-diff hunk grouping differs (similar vs difflib)
 legacy-subdir dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
-samename dry  # phase 3: same-named definitions in different files (upstream #122)
-samename report  # phase 3: same-named definitions in different files (upstream #122)
+samename dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
 unicode dry  # intentional: upstream --dry deletes files it would empty; Rust shows the diff
 fix_edge_cases dry  # intentional: upstream leaves `: int` / `+= 1` stubs behind

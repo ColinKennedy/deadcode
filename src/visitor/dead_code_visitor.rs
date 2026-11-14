@@ -27,7 +27,9 @@ use crate::utils::line_index::LineIndex;
 use crate::utils::nested_scopes::NestedScope;
 use crate::visitor::code_item::{path_as_posix, CodeItem};
 use crate::visitor::ignore;
+use crate::visitor::module_exports::collect_module_exports;
 use crate::visitor::noqa;
+use crate::visitor::usage_graph::{ItemKey, UsageGraph};
 use crate::visitor::utils::get_decorator_name;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -111,6 +113,19 @@ pub struct DeadCodeVisitor<'a> {
     /// value's continuation lines behind as invalid Python (upstream issue
     /// #26).
     assignment_removal_range: Option<TextRange>,
+
+    /// Basename (without extension) of the file being visited: the module
+    /// half of every usage-graph key.
+    module_name: String,
+    /// What the reachability pass needs; see `usage_graph`.
+    usage_graph: UsageGraph,
+    /// Owner token of each enclosing definition whose body is being walked,
+    /// innermost last; `None` for a root context (an ignored definition, or
+    /// a decorator, which runs at definition time).
+    usage_context_stack: Vec<Option<usize>>,
+    /// Owner token of the definition `push_definition` last recorded, or
+    /// `None` if it ignored it.
+    last_defined: Option<usize>,
 }
 
 /// Names loaded by the expressions inside string literals nested in
@@ -301,6 +316,10 @@ impl<'a> DeadCodeVisitor<'a> {
             source: String::new(),
             qualified_imports: HashMap::new(),
             assignment_removal_range: None,
+            module_name: String::new(),
+            usage_graph: UsageGraph::default(),
+            usage_context_stack: Vec::new(),
+            last_defined: None,
         }
     }
 
@@ -331,6 +350,9 @@ impl<'a> DeadCodeVisitor<'a> {
             self.scope_parts = vec![module_name.to_string()];
             self.scope_kinds = Vec::new();
             self.qualified_imports.clear();
+            self.module_name = module_name.to_string();
+            self.usage_context_stack.clear();
+            self.last_defined = None;
 
             let is_dunder_file = filename.starts_with("__") && filename.ends_with("__.py");
             let content_str = String::from_utf8_lossy(&file_content).into_owned();
@@ -346,6 +368,11 @@ impl<'a> DeadCodeVisitor<'a> {
                 let parsed = parse_abstract_syntax_tree(&self.source);
                 match parsed {
                     Ok(module) => {
+                        if let Some(exports) = collect_module_exports(&module) {
+                            self.usage_graph
+                                .module_exports
+                                .insert(self.module_name.clone(), exports);
+                        }
                         self.walk_stmt_list(&module);
                     }
                     Err(_) => {
@@ -378,14 +405,25 @@ impl<'a> DeadCodeVisitor<'a> {
     }
 
     pub fn get_unused_code_items(&self) -> Vec<CodeItem> {
+        let collections = [
+            &self.defined_attrs,
+            &self.defined_classes,
+            &self.defined_funcs,
+            &self.defined_imports,
+            &self.defined_methods,
+            &self.defined_props,
+            &self.defined_vars,
+        ];
+        let keys: Vec<ItemKey> = collections
+            .iter()
+            .flat_map(|items| items.iter().map(item_key))
+            .collect();
+        let live = self.usage_graph.live_item_keys(&keys, &self.used_names);
+
         let mut unused: Vec<CodeItem> = Vec::new();
-        unused.extend(unused_of(&self.defined_attrs, &self.used_names));
-        unused.extend(unused_of(&self.defined_classes, &self.used_names));
-        unused.extend(unused_of(&self.defined_funcs, &self.used_names));
-        unused.extend(unused_of(&self.defined_imports, &self.used_names));
-        unused.extend(unused_of(&self.defined_methods, &self.used_names));
-        unused.extend(unused_of(&self.defined_props, &self.used_names));
-        unused.extend(unused_of(&self.defined_vars, &self.used_names));
+        for items in collections {
+            unused.extend(unused_of(items, &self.used_names, &live));
+        }
         unused.extend(self.commented_out_code.iter().cloned());
         unused.extend(self.unreachable_body.iter().cloned());
         unused.extend(self.unreachable_code.iter().cloned());
@@ -397,8 +435,37 @@ impl<'a> DeadCodeVisitor<'a> {
         unused
     }
 
+    /// Records a plain anchor: a non-bare usage (attribute access, string
+    /// reference, ...) that keeps every item of that name alive.
     fn add_used_name(&mut self, name: &str) {
         self.used_names.insert(name.to_string());
+    }
+
+    /// Records a bare name usage, owned by the innermost enclosing definition
+    /// (or a root usage outside any).
+    fn add_bare_usage(&mut self, name: &str) {
+        let source = (self.module_name.clone(), name.to_string());
+        match self.usage_context_stack.last().copied().flatten() {
+            Some(owner) => {
+                self.usage_graph
+                    .usage_owners
+                    .entry(source)
+                    .or_default()
+                    .insert(owner);
+            }
+            None => {
+                self.usage_graph.root_usage_sources.insert(source);
+            }
+        }
+    }
+
+    /// Walks decorators as root usages: they run at definition time.
+    fn walk_decorators(&mut self, decorator_list: &[Decorator]) {
+        self.usage_context_stack.push(None);
+        for decorator in decorator_list {
+            self.walk_expr(&decorator.expression);
+        }
+        self.usage_context_stack.pop();
     }
 
     fn is_directly_in_class_body(&self) -> bool {
@@ -757,16 +824,26 @@ impl<'a> DeadCodeVisitor<'a> {
         if bases.is_empty() {
             return None;
         }
-        let base_names: Vec<String> = bases
-            .iter()
-            .flat_map(|base| self.expression_name_candidates(base))
-            .collect();
+        let mut base_names: Vec<String> = Vec::new();
+        for base in bases {
+            let mut candidates = self.expression_name_candidates(base);
+            // Upstream also matches a dotted base (`graphene.ObjectType`) by
+            // its final component (`ObjectType`), right after the full name.
+            if let Expr::Attribute(attribute) = base {
+                if !candidates.is_empty() {
+                    candidates.insert(1, attribute.attr.to_string());
+                }
+            }
+            base_names.extend(candidates);
+        }
         let mut inherits_from = base_names.clone();
         for base in &base_names {
             if let Some(chain) = self.scopes.get_inherits_from(&self.scope_parts, base) {
                 inherits_from.extend(chain.iter().cloned());
             }
         }
+        let mut seen = HashSet::new();
+        inherits_from.retain(|name| seen.insert(name.clone()));
         Some(inherits_from)
     }
 
@@ -802,8 +879,14 @@ impl<'a> DeadCodeVisitor<'a> {
             .iter()
             .flat_map(|decorator| {
                 let mut names = vec![get_decorator_name(&decorator.expression)];
+                // `@receiver(post_save)` is named after the callee, like
+                // `get_decorator_name` does, so it resolves through imports too.
+                let mut callee = &decorator.expression;
+                while let Expr::Call(call) = callee {
+                    callee = &call.func;
+                }
                 names.extend(
-                    self.expression_name_candidates(&decorator.expression)
+                    self.expression_name_candidates(callee)
                         .into_iter()
                         .map(|name| format!("@{name}")),
                 );
@@ -916,7 +999,26 @@ impl<'a> DeadCodeVisitor<'a> {
         }
 
         if ignored {
+            // An ignored definition owns nothing: usages in its body stay
+            // root usages and keep their targets alive.
+            self.last_defined = None;
             return;
+        }
+        self.last_defined = Some(self.usage_graph.owner_keys.len());
+        self.usage_graph
+            .owner_keys
+            .push((self.module_name.clone(), name.to_string()));
+        let is_module_level = self.scope_parts.len() == 1
+            && matches!(
+                kind,
+                DefinedKind::Function | DefinedKind::Class | DefinedKind::Variable
+            );
+        if is_module_level {
+            self.usage_graph
+                .module_definitions
+                .entry(self.module_name.clone())
+                .or_default()
+                .insert(name.to_string());
         }
 
         let scope_string = if self.scope_parts.is_empty() {
@@ -1024,6 +1126,37 @@ impl<'a> DeadCodeVisitor<'a> {
         }
     }
 
+    /// Records what `from module import ...` binds, for resolving bare
+    /// usages to the module that defines them.
+    fn record_import_edges(&mut self, module: &str, names: &[Alias]) {
+        let source_module = module.rsplit('.').next().unwrap_or(module).to_string();
+        let graph = &mut self.usage_graph;
+        for alias in names {
+            let imported = alias.name.as_str();
+            if imported == "*" {
+                graph
+                    .wildcard_imports
+                    .entry(self.module_name.clone())
+                    .or_default()
+                    .insert(source_module.clone());
+                continue;
+            }
+            let local = alias.asname.as_ref().map_or(imported, |a| a.as_str());
+            graph
+                .explicit_imports
+                .entry(self.module_name.clone())
+                .or_default()
+                .insert(local.to_string());
+            graph
+                .import_edges
+                .entry(self.module_name.clone())
+                .or_default()
+                .entry(local.to_string())
+                .or_default()
+                .insert((source_module.clone(), imported.to_string()));
+        }
+    }
+
     fn add_aliases(&mut self, names: &[Alias], module: Option<&str>) {
         for alias in names {
             let full_name = alias.name.as_str();
@@ -1058,7 +1191,7 @@ impl<'a> DeadCodeVisitor<'a> {
         match ctx {
             ExprContext::Load | ExprContext::Del => {
                 if !ignore::IGNORED_VARIABLE_NAMES.contains(&id) {
-                    self.add_used_name(id);
+                    self.add_bare_usage(id);
                 }
             }
             ExprContext::Store => {
@@ -1308,6 +1441,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 for decorator in &c.decorator_list {
                     self.track_usefixtures_mark(&decorator.expression);
                 }
+                self.last_defined = None;
                 self.push_definition(
                     DefinedKind::Class,
                     c.name.as_str(),
@@ -1320,6 +1454,7 @@ impl<'a> DeadCodeVisitor<'a> {
 
                 self.scope_parts.push(c.name.as_str().to_string());
                 self.scope_kinds.push(ScopeKind::Class);
+                self.usage_context_stack.push(self.last_defined);
 
                 if !self.should_ignore_new_definitions {
                     if fnmatch::match_any(c.name.as_str(), &self.args.ignore_bodies_of, true) {
@@ -1348,9 +1483,7 @@ impl<'a> DeadCodeVisitor<'a> {
                     }
                 }
 
-                for decorator in &c.decorator_list {
-                    self.walk_expr(&decorator.expression);
-                }
+                self.walk_decorators(&c.decorator_list);
                 for base in c.bases() {
                     self.walk_expr(base);
                 }
@@ -1364,6 +1497,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 }
                 self.scope_parts.pop();
                 self.scope_kinds.pop();
+                self.usage_context_stack.pop();
             }
             // Covers both `def` and `async def`: ruff models them as one node
             // with an `is_async` flag, where Python/rustpython had separate
@@ -1384,6 +1518,7 @@ impl<'a> DeadCodeVisitor<'a> {
                     self.should_ignore_new_definitions = true;
                     should_turn_off = true;
                 }
+                self.last_defined = None;
                 self.walk_function_like(
                     &f.name,
                     &f.parameters,
@@ -1391,8 +1526,15 @@ impl<'a> DeadCodeVisitor<'a> {
                     f.range().start(),
                     f.range().end(),
                 );
+                // Upstream records a quoted return annotation before entering
+                // the function, so its names are usages of the enclosing
+                // context, unlike the rest of the signature.
+                if let Some(returns) = &f.returns {
+                    self.record_annotation_strings(returns);
+                }
                 self.scope_parts.push(f.name.as_str().to_string());
                 self.scope_kinds.push(ScopeKind::Function);
+                self.usage_context_stack.push(self.last_defined);
                 if !self.should_ignore_new_definitions
                     && (fnmatch::match_any(f.name.as_str(), &self.args.ignore_bodies_of, true)
                         || fnmatch::match_many(
@@ -1404,12 +1546,10 @@ impl<'a> DeadCodeVisitor<'a> {
                     self.should_ignore_new_definitions = true;
                     should_turn_off = true;
                 }
-                for decorator in &f.decorator_list {
-                    self.walk_expr(&decorator.expression);
-                }
+                self.walk_decorators(&f.decorator_list);
                 self.walk_parameters(&f.parameters);
                 if let Some(returns) = &f.returns {
-                    self.walk_annotation(returns);
+                    self.walk_expr(returns);
                 }
                 self.walk_stmt_list(&f.body);
                 if should_turn_off {
@@ -1417,11 +1557,23 @@ impl<'a> DeadCodeVisitor<'a> {
                 }
                 self.scope_parts.pop();
                 self.scope_kinds.pop();
+                self.usage_context_stack.pop();
             }
             Stmt::Import(i) => self.add_aliases(&i.names, None),
             Stmt::ImportFrom(i) => {
                 if i.module.as_deref() != Some("__future__") {
-                    self.add_aliases(&i.names, i.module.as_deref());
+                    if let Some(module) = i.module.as_deref() {
+                        self.record_import_edges(module, &i.names);
+                    }
+                    // Only absolute imports qualify names: `from . import x`
+                    // and `from .m import x` say nothing about an absolute
+                    // path, so upstream records neither. `Some("")` marks
+                    // that (`None` would mean a plain `import`).
+                    let qualifying_module = match i.level {
+                        0 => i.module.as_deref(),
+                        _ => Some(""),
+                    };
+                    self.add_aliases(&i.names, qualifying_module);
                 }
             }
             Stmt::Assign(a) => {
@@ -1645,8 +1797,12 @@ impl<'a> DeadCodeVisitor<'a> {
     /// reference) annotations such as `"OrderedDict[str, int]"` as used.
     fn walk_annotation(&mut self, annotation: &Expr) {
         self.walk_expr(annotation);
+        self.record_annotation_strings(annotation);
+    }
+
+    fn record_annotation_strings(&mut self, annotation: &Expr) {
         for name in annotation_string_names(annotation, 10) {
-            self.add_used_name(&name);
+            self.add_bare_usage(&name);
         }
     }
 
@@ -1861,10 +2017,27 @@ impl<'a> DeadCodeVisitor<'a> {
     }
 }
 
-fn unused_of(items: &[CodeItem], used_names: &HashSet<String>) -> Vec<CodeItem> {
+/// The usage-graph key of a definition: its module basename and name.
+fn item_key(item: &CodeItem) -> ItemKey {
+    let filename = item
+        .filename
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let module = filename
+        .rsplit_once('.')
+        .map_or(filename.as_str(), |(base, _)| base);
+    (module.to_string(), item.name.clone())
+}
+
+fn unused_of(
+    items: &[CodeItem],
+    used_names: &HashSet<String>,
+    live: &HashSet<ItemKey>,
+) -> Vec<CodeItem> {
     let mut unused: Vec<CodeItem> = items
         .iter()
-        .filter(|item| !used_names.contains(&item.name))
+        .filter(|item| !used_names.contains(&item.name) && !live.contains(&item_key(item)))
         .cloned()
         .collect();
     unused.sort_by_key(|item| item.name.to_lowercase());
@@ -2050,10 +2223,12 @@ mod tests {
         // match) still has its inner attribute reported individually.
         // Line-number order (UnusedClass at line 1, before AnotherUnusedClass),
         // matching the real cataloged Python test's expected output order.
+        // `Base` is only used by the unused `UnusedClass`, so it cascades.
         assert_eq!(
             names(&items),
             vec![
                 "UnusedClass",
+                "Base",
                 "AnotherUnusedClass",
                 "another_unused_attribute"
             ]
