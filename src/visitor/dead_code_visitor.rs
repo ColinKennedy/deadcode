@@ -791,6 +791,10 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.scope_kinds.push(ScopeKind::Class);
 
                 if !self.should_ignore_new_definitions {
+                    if fnmatch::match_any(c.name.as_str(), &self.args.ignore_bodies_of, true) {
+                        self.should_ignore_new_definitions = true;
+                        should_turn_off = true;
+                    }
                     if let Some(chain) = &inherits_from {
                         if fnmatch::match_many(
                             chain,
@@ -847,11 +851,13 @@ impl<'a> DeadCodeVisitor<'a> {
                     .map(|decorator| get_decorator_name(&decorator.expression))
                     .collect::<Vec<_>>();
                 let mut should_turn_off = false;
-                if fnmatch::match_many(
-                    &decorator_names,
-                    &self.args.ignore_definitions_if_decorated_with,
-                    true,
-                ) && !self.should_ignore_new_definitions
+                if (fnmatch::match_any(f.name.as_str(), &self.args.ignore_definitions, true)
+                    || fnmatch::match_many(
+                        &decorator_names,
+                        &self.args.ignore_definitions_if_decorated_with,
+                        true,
+                    ))
+                    && !self.should_ignore_new_definitions
                 {
                     self.should_ignore_new_definitions = true;
                     should_turn_off = true;
