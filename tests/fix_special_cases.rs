@@ -117,6 +117,38 @@ mod unreachable_code_after_terminal_statement {
     }
 }
 
+mod commented_out_code {
+    use super::*;
+
+    #[test]
+    fn reports_and_removes_a_standalone_code_comment() {
+        let p = Project::new();
+        p.write("foo.py", "# print(\"old\")\nprint(\"live\")\n");
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC12 Commented out code"));
+        assert_eq!(p.read("foo.py"), "print(\"live\")\n");
+    }
+
+    #[test]
+    fn removes_an_inline_comment_but_keeps_its_code() {
+        let p = Project::new();
+        p.write("foo.py", "value = 1  # print(\"old\")\nprint(value)\n");
+        let result = p.run(&["foo.py", "--no-color", "--fix"]).unwrap();
+        assert!(result.contains("DC12 Commented out code"));
+        assert_eq!(p.read("foo.py"), "value = 1\nprint(value)\n");
+    }
+
+    #[test]
+    fn ignores_type_directives_and_noqa() {
+        let p = Project::new();
+        p.write(
+            "foo.py",
+            "# type: ignore\n# print(\"old\")  # noqa: DC12\nprint(\"live\")\n",
+        );
+        assert_eq!(p.run(&["foo.py", "--no-color"]), None);
+    }
+}
+
 /// Regression: removing every name from a parenthesized multi-import
 /// statement must delete the whole statement, not leave `from file1 import (`
 /// / `)` behind. The Python original left the stub (`# TODO: empty imports

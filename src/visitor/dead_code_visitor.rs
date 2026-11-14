@@ -73,6 +73,7 @@ pub struct DeadCodeVisitor<'a> {
     defined_props: Vec<CodeItem>,
     defined_vars: Vec<CodeItem>,
     pub unused_file: Vec<CodeItem>,
+    commented_out_code: Vec<CodeItem>,
     unreachable_body: Vec<CodeItem>,
     unreachable_code: Vec<CodeItem>,
 
@@ -173,6 +174,47 @@ fn is_identifier_like(name: &str) -> bool {
     matches!(name.chars().next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
 }
 
+fn is_commented_out_code(code: &str) -> bool {
+    let lower = code.trim_start().to_ascii_lowercase();
+    if [
+        "type:", "ty:", "pyright:", "pyre-", "pyre:", "mypy:", "pytype:",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+    {
+        return false;
+    }
+
+    let statement_prefixes = [
+        "import ", "from ", "def ", "class ", "return", "raise", "break", "continue", "pass",
+        "if ", "for ", "while ", "with ", "try:", "except", "elif ", "else:",
+    ];
+    if !code.contains(['(', '=', '[', '{'])
+        && !statement_prefixes
+            .iter()
+            .any(|prefix| code.starts_with(prefix))
+    {
+        return false;
+    }
+
+    let Ok(statements) = parse_abstract_syntax_tree(code) else {
+        return false;
+    };
+    statements.iter().any(|statement| match statement {
+        Stmt::Expr(expression) => !matches!(
+            expression.value.as_ref(),
+            Expr::StringLiteral(_)
+                | Expr::BytesLiteral(_)
+                | Expr::NumberLiteral(_)
+                | Expr::BooleanLiteral(_)
+                | Expr::NoneLiteral(_)
+                | Expr::EllipsisLiteral(_)
+                | Expr::Name(_)
+        ),
+        _ => true,
+    })
+}
+
 impl<'a> DeadCodeVisitor<'a> {
     pub fn new(args: &'a Args, tach_index: &'a TachIndex) -> Self {
         DeadCodeVisitor {
@@ -186,6 +228,7 @@ impl<'a> DeadCodeVisitor<'a> {
             defined_props: Vec::new(),
             defined_vars: Vec::new(),
             unused_file: Vec::new(),
+            commented_out_code: Vec::new(),
             unreachable_body: Vec::new(),
             unreachable_code: Vec::new(),
             parse_failures: Vec::new(),
@@ -237,6 +280,7 @@ impl<'a> DeadCodeVisitor<'a> {
                 self.filename = PathBuf::from(file_path);
                 self.line_index = LineIndex::new(&content_str);
                 self.source = content_str;
+                self.collect_commented_out_code();
 
                 let parsed = parse_abstract_syntax_tree(&self.source);
                 match parsed {
@@ -281,6 +325,7 @@ impl<'a> DeadCodeVisitor<'a> {
         unused.extend(unused_of(&self.defined_methods, &self.used_names));
         unused.extend(unused_of(&self.defined_props, &self.used_names));
         unused.extend(unused_of(&self.defined_vars, &self.used_names));
+        unused.extend(self.commented_out_code.iter().cloned());
         unused.extend(self.unreachable_body.iter().cloned());
         unused.extend(self.unreachable_code.iter().cloned());
         unused.extend(self.unused_file.iter().cloned());
@@ -370,6 +415,65 @@ impl<'a> DeadCodeVisitor<'a> {
             Some(true)
         } else {
             None
+        }
+    }
+
+    fn collect_commented_out_code(&mut self) {
+        let options = ruff_python_parser::ParseOptions::from(ruff_python_parser::Mode::Module)
+            .with_target_version(ruff_python_ast::PythonVersion::latest());
+        let Ok(parsed) = ruff_python_parser::parse(&self.source, options) else {
+            return;
+        };
+        for token in parsed.tokens() {
+            if token.kind() != ruff_python_ast::token::TokenKind::Comment {
+                continue;
+            }
+            let range = token.range();
+            let comment = &self.source[range];
+            let mut code = &comment[1..];
+            if let Some(noqa_start) = code.match_indices('#').find_map(|(index, _)| {
+                code[index + 1..]
+                    .trim_start()
+                    .to_ascii_lowercase()
+                    .starts_with("noqa")
+                    .then_some(index)
+            }) {
+                code = &code[..noqa_start];
+            }
+            let code = code.trim();
+            if !is_commented_out_code(code) {
+                continue;
+            }
+
+            let (line, column) = self.line_index.line_col(range.start());
+            if noqa::ignore_line(&self.noqa_lines, line as u32, "DC12") {
+                continue;
+            }
+            let line_start = self.source[..range.start().to_usize()]
+                .rfind('\n')
+                .map_or(0, |index| index + 1);
+            let prefix = &self.source[line_start..range.start().to_usize()];
+            let removal_start = line_start + prefix.trim_end().len();
+            let (_, removal_column) = self
+                .line_index
+                .line_col(TextSize::new(removal_start as u32));
+            let (_, end_column) = self.line_index.line_col(range.end());
+            self.commented_out_code.push(CodeItem::new(
+                code.to_string(),
+                UnusedCodeType::CommentedOutCode,
+                self.filename.clone(),
+                vec![Part::new(
+                    line as u32,
+                    line as u32,
+                    removal_column as u32,
+                    end_column as u32,
+                )],
+                None,
+                None,
+                Some(line as u32),
+                Some(column as u32),
+                "Commented out code".to_string(),
+            ));
         }
     }
 
