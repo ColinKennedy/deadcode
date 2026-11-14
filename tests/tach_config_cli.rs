@@ -294,9 +294,7 @@ fn count_and_fix_apply_only_to_explicit_cli_paths() {
     );
 
     p.run(&[&primary, "--tach-config", &tach, "--fix", "--no-color"]);
-    assert!(!p
-        .read("primary/src/module.py")
-        .contains("unused_primary"));
+    assert!(!p.read("primary/src/module.py").contains("unused_primary"));
     assert_eq!(p.read("reference/src/module.py"), reference_source);
 }
 

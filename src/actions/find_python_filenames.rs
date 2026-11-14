@@ -136,11 +136,8 @@ fn find_python_filenames_from_paths(
 }
 
 pub fn find_python_filenames(args: &Args, tach_index: &TachIndex) -> Vec<String> {
-    let filenames = find_python_filenames_from_paths(
-        args.paths.iter().map(PathBuf::from),
-        args,
-        tach_index,
-    );
+    let filenames =
+        find_python_filenames_from_paths(args.paths.iter().map(PathBuf::from), args, tach_index);
     log_filenames(args, &filenames);
     filenames
 }
@@ -151,11 +148,8 @@ pub(crate) fn find_python_filenames_with_references(
     args: &Args,
     tach_index: &TachIndex,
 ) -> PythonFilenames {
-    let mut analysis = find_python_filenames_from_paths(
-        args.paths.iter().map(PathBuf::from),
-        args,
-        tach_index,
-    );
+    let mut analysis =
+        find_python_filenames_from_paths(args.paths.iter().map(PathBuf::from), args, tach_index);
     let reportable: HashSet<PathBuf> = analysis
         .iter()
         .map(|filename| resolve_path(Path::new(filename)))
